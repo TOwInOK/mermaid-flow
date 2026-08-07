@@ -416,34 +416,34 @@ const MM_COMPLETIONS = [
     detail: "Subgraph direction",
     kind: "kw",
   },
-  // sequence
+  // sequence — $0 where you type next; ids filled from doc when possible
   {
     label: "participant",
-    insert: "participant A as $0",
+    insert: "participant $0",
     detail: "Sequence participant",
     kind: "seq",
   },
   {
     label: "actor",
-    insert: "actor U as $0",
+    insert: "actor $0",
     detail: "Sequence actor",
     kind: "seq",
   },
   {
     label: "Note right of",
-    insert: "Note right of A: $0",
+    insert: "Note right of $0: ",
     detail: "Sequence note",
     kind: "seq",
   },
   {
     label: "Note left of",
-    insert: "Note left of A: $0",
+    insert: "Note left of $0: ",
     detail: "Sequence note",
     kind: "seq",
   },
   {
     label: "Note over",
-    insert: "Note over A,B: $0",
+    insert: "Note over $0: ",
     detail: "Note over lifelines",
     kind: "seq",
   },
@@ -495,11 +495,13 @@ const MM_COMPLETIONS = [
     detail: "Group participants",
     kind: "seq",
   },
-  // flowchart edges / nodes — $0 inside label
+  // flowchart edges / nodes — shape only (type id before, or edit after)
   { label: "-->", insert: "-->", detail: "Arrow", kind: "edge" },
   { label: "---", insert: "---", detail: "Link (no arrow)", kind: "edge" },
   { label: "-.->", insert: "-.->", detail: "Dotted arrow", kind: "edge" },
   { label: "==>", insert: "==>", detail: "Thick arrow", kind: "edge" },
+  { label: "->>", insert: "->>", detail: "Solid open arrow", kind: "edge" },
+  { label: "-->>", insert: "-->>", detail: "Dashed open arrow", kind: "edge" },
   {
     label: "-->|label|",
     insert: "-->|$0| ",
@@ -508,50 +510,50 @@ const MM_COMPLETIONS = [
   },
   {
     label: "node [rect]",
-    insert: 'ID["$0"]',
-    detail: "Rectangle node",
+    insert: '["$0"]',
+    detail: "Rectangle shape",
     kind: "node",
   },
   {
     label: "node (round)",
-    insert: 'ID("$0")',
-    detail: "Rounded node",
+    insert: '("$0")',
+    detail: "Rounded shape",
     kind: "node",
   },
   {
     label: "node ([stadium])",
-    insert: 'ID(["$0"])',
-    detail: "Stadium node",
+    insert: '(["$0"])',
+    detail: "Stadium shape",
     kind: "node",
   },
   {
     label: "node {rhombus}",
-    insert: 'ID{"$0"}',
-    detail: "Decision node",
+    insert: '{"$0"}',
+    detail: "Decision shape",
     kind: "node",
   },
   {
     label: "node [(db)]",
-    insert: 'ID[("$0")]',
+    insert: '[("$0")]',
     detail: "Cylinder / DB",
     kind: "node",
   },
   {
     label: "node ((circle))",
-    insert: 'ID(("$0"))',
-    detail: "Circle node",
+    insert: '(("$0"))',
+    detail: "Circle shape",
     kind: "node",
   },
   // style / misc
   {
     label: "classDef",
-    insert: "classDef name fill:#f9f,stroke:#333",
+    insert: "classDef $0 fill:#f9f,stroke:#333",
     detail: "CSS class",
     kind: "kw",
   },
   {
     label: "style",
-    insert: "style ID fill:#bbf,stroke:#333",
+    insert: "style $0 fill:#bbf,stroke:#333",
     detail: "Inline style",
     kind: "kw",
   },
@@ -563,7 +565,7 @@ const MM_COMPLETIONS = [
   },
   {
     label: "click",
-    insert: 'click ID href "$0"',
+    insert: 'click $0 href ""',
     detail: "Click handler",
     kind: "kw",
   },
@@ -579,7 +581,7 @@ const MM_COMPLETIONS = [
   { label: "[*]", insert: "[*]", detail: "Start/end state", kind: "kw" },
   {
     label: "note right of",
-    insert: "note right of State\n  $0\nend note",
+    insert: "note right of $0\n  \nend note",
     detail: "State note",
     kind: "kw",
   },
@@ -687,10 +689,88 @@ function expandInsert(insert) {
   return { text: raw.slice(0, idx) + raw.slice(idx + 2), caretInInsert: idx };
 }
 
-function wordPrefixAt(text, pos) {
+/** Auto-close pairs (VS Code-lite). No multi-cursor / smart quotes. */
+const MM_PAIRS = {
+  "[": "]",
+  "(": ")",
+  "{": "}",
+  '"': '"',
+  "'": "'",
+};
+
+/**
+ * @returns {null | { next: string, caret: number, sel?: [number, number] }}
+ */
+function applyAutoPair(text, start, end, key) {
+  const close = MM_PAIRS[key];
+  if (close) {
+    const selected = text.slice(start, end);
+    const next =
+      text.slice(0, start) + key + selected + close + text.slice(end);
+    if (start === end) return { next, caret: start + 1 };
+    // wrap: caret after content (before close); caller may reselect inner
+    return { next, caret: end + 1, sel: [start + 1, end + 1] };
+  }
+  // type-through existing closer
+  if (start === end && text[start] === key) {
+    for (const c of Object.values(MM_PAIRS)) {
+      if (c === key) return { next: text, caret: start + 1 };
+    }
+  }
+  return null;
+}
+
+/** Backspace between empty pair → delete both. */
+function applyPairBackspace(text, start, end) {
+  if (start !== end || start < 1) return null;
+  const left = text[start - 1];
+  const right = text[start];
+  if (MM_PAIRS[left] === right) {
+    return {
+      next: text.slice(0, start - 1) + text.slice(start + 1),
+      caret: start - 1,
+    };
+  }
+  return null;
+}
+
+/**
+ * Prefix at caret. Word and edge runs are separate so `A-->` is not one token.
+ * `-` was previously in the word charset → edges never completed while typing.
+ * @returns {{ start: number, prefix: string, mode: "word" | "edge" }}
+ */
+function completionPrefixAt(text, pos) {
   let j = pos;
-  while (j > 0 && /[A-Za-z0-9_@.*%-]/.test(text[j - 1])) j--;
-  return { start: j, prefix: text.slice(j, pos) };
+  if (j > 0 && /[-=~.>]/.test(text[j - 1])) {
+    while (j > 0 && /[-=~.>]/.test(text[j - 1])) j--;
+    return { start: j, prefix: text.slice(j, pos), mode: "edge" };
+  }
+  // no `-` here — edges use mode above
+  while (j > 0 && /[A-Za-z0-9_@.*%]/.test(text[j - 1])) j--;
+  return { start: j, prefix: text.slice(j, pos), mode: "word" };
+}
+
+/** True when caret is inside a "…" / '…' or after `%%` comment on the line. */
+function inStringOrComment(text, pos) {
+  const lineStart = text.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
+  const line = text.slice(lineStart, pos);
+  const pct = line.indexOf("%%");
+  if (pct !== -1 && line[pct + 2] !== "{") return true;
+
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+  }
+  return quote !== null;
 }
 
 function detectDiagramKind(text) {
@@ -705,12 +785,68 @@ function detectDiagramKind(text) {
 }
 
 /**
+ * Lower score = better. null = no match.
+ * Keep base ≥ 50 so boosts never collide with "no match".
+ */
+function scoreCompletion(c, p, mode) {
+  if (!p) {
+    if (mode === "edge") return c.kind === "edge" ? 0 : 100;
+    return c.kind === "id" ? 0 : 20;
+  }
+  const lab = c.label.toLowerCase();
+  const ins = c.insert.toLowerCase().replace(/\$0/g, "");
+  let s;
+  if (lab === p || ins === p) s = 50;
+  else if (lab.startsWith(p)) s = 60;
+  else if (ins.startsWith(p)) s = 65;
+  else if (lab.includes(p)) s = 90;
+  else if (ins.includes(p)) s = 100;
+  else return null;
+  if (c.kind === "id") s -= 5;
+  if (mode === "edge" && c.kind === "edge") s -= 8;
+  if (mode === "edge" && c.kind !== "edge") s += 30;
+  // default solid arrow beats --- / locale tie
+  if (mode === "edge" && c.label === "-->") s -= 3;
+  // longer shared prefix with insert wins (e.g. `-.` → `-.->`)
+  if (ins.startsWith(p)) s -= Math.min(p.length, 6);
+  return s;
+}
+
+/** Fill Note/activate targets from diagram ids when present. */
+function bindDocIds(item, ids) {
+  if (!ids.length) return item;
+  const a = ids[0];
+  const b = ids[1] || ids[0];
+  const lab = item.label;
+  if (lab === "Note right of")
+    return { ...item, insert: `Note right of ${a}: $0` };
+  if (lab === "Note left of")
+    return { ...item, insert: `Note left of ${a}: $0` };
+  if (lab === "Note over")
+    return { ...item, insert: `Note over ${a},${b}: $0` };
+  if (lab === "activate" || lab === "deactivate")
+    return { ...item, insert: `${lab} ${a}` };
+  if (lab === "note right of")
+    return { ...item, insert: `note right of ${a}\n  $0\nend note` };
+  if (lab === "style" || lab === "click")
+    return {
+      ...item,
+      insert: item.insert.replace("$0", a),
+    };
+  return item;
+}
+
+/**
  * Completion list for caret position.
  * @param {boolean} [force] full catalog (Ctrl+Space); else context-filtered.
  * @returns {{ items: MmCompletion[], replaceStart: number, replaceEnd: number }}
  */
 function mermaidCompletions(text, pos, force = false) {
-  const { start, prefix } = wordPrefixAt(text, pos);
+  if (!force && inStringOrComment(text, pos)) {
+    return { items: [], replaceStart: pos, replaceEnd: pos };
+  }
+
+  const { start, prefix, mode } = completionPrefixAt(text, pos);
   const lineStart = text.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
   const lineBefore = text.slice(lineStart, start);
   const trimmedDoc = text.trim();
@@ -720,9 +856,14 @@ function mermaidCompletions(text, pos, force = false) {
   /** @type {MmCompletion[]} */
   let pool = MM_COMPLETIONS;
 
-  // Ctrl+Space → entire snippet catalog. Typing → context-narrowed pool.
+  // Ctrl+Space → catalog (+ rank). Typing → context-narrowed pool.
   if (!force) {
-    if (!trimmedDoc || (lineStart === 0 && !lineBefore.trim() && start === 0)) {
+    if (mode === "edge") {
+      pool = MM_COMPLETIONS.filter((c) => c.kind === "edge");
+    } else if (
+      !trimmedDoc ||
+      (lineStart === 0 && !lineBefore.trim() && start === 0)
+    ) {
       pool = MM_COMPLETIONS.filter((c) => c.kind === "diagram");
     } else if (/^(flowchart|graph)\s*$/i.test(lineBefore)) {
       pool = MM_COMPLETIONS.filter((c) => c.kind === "dir");
@@ -746,33 +887,39 @@ function mermaidCompletions(text, pos, force = false) {
           c.label === "[*]" ||
           c.label.startsWith("note"),
       );
+    } else if (kind === "class" || kind === "er" || kind === "gantt") {
+      // thin: keywords only; ids still added below
+      pool = MM_COMPLETIONS.filter((c) => c.kind === "kw");
     }
   }
 
-  // Existing IDs from the open diagram (Qora, Bot, …) — not labels.
   const docIds = extractDocIds(text);
   /** @type {MmCompletion[]} */
-  const idItems = docIds.map((id) => ({
-    label: id,
-    insert: id,
-    detail: "from diagram",
-    kind: "id",
-  }));
+  const idItems =
+    mode === "edge"
+      ? []
+      : docIds.map((id) => ({
+          label: id,
+          insert: id,
+          detail: "from diagram",
+          kind: "id",
+        }));
 
-  const match = (c) => {
-    // Full catalog on force still respects typed prefix if any.
-    if (!p) return true;
-    const lab = c.label.toLowerCase();
-    const ins = c.insert.toLowerCase().replace(/\$0/g, "");
-    return lab.startsWith(p) || lab.includes(p) || ins.startsWith(p);
-  };
+  const scored = [];
+  for (const c of idItems) {
+    const s = scoreCompletion(c, p, mode);
+    if (s != null) scored.push({ c, s });
+  }
+  for (const raw of pool) {
+    const c = bindDocIds(raw, docIds);
+    const s = scoreCompletion(c, p, mode);
+    if (s != null) scored.push({ c, s });
+  }
+  scored.sort((a, b) => a.s - b.s || a.c.label.localeCompare(b.c.label));
 
-  const idsMatched = idItems.filter(match);
-  const kwMatched = pool.filter(match);
-
-  // IDs first, then snippets. Full list on Ctrl+Space; compact while typing.
-  const cap = force ? 200 : 16;
-  const items = [...idsMatched, ...kwMatched].slice(0, cap);
+  // ponytail: cap 40 on force (was 200 scroll hell); typing stays compact
+  const cap = force ? 40 : 16;
+  const items = scored.slice(0, cap).map((x) => x.c);
 
   return { items, replaceStart: start, replaceEnd: pos };
 }
@@ -1148,6 +1295,43 @@ function MermaidEditor({ value, onChange, disabled, placeholder }) {
           e.key === "End")
       ) {
         setCm(null);
+      }
+
+      // Auto-close / wrap / type-through / empty-pair backspace (no mod/alt).
+      if (!mod && !e.altKey) {
+        const selStart = ta.selectionStart ?? 0;
+        const selEnd = ta.selectionEnd ?? 0;
+        if (e.key === "Backspace") {
+          const pairBs = applyPairBackspace(text, selStart, selEnd);
+          if (pairBs) {
+            e.preventDefault();
+            e.stopPropagation();
+            setCm(null);
+            history.current.coalesceAt = 0;
+            emit(pairBs.next, pairBs.caret);
+            return;
+          }
+        } else {
+          const pair = applyAutoPair(text, selStart, selEnd, e.key);
+          if (pair) {
+            e.preventDefault();
+            e.stopPropagation();
+            setCm(null);
+            history.current.coalesceAt = 0;
+            emit(pair.next, pair.caret);
+            if (pair.sel) {
+              const [a, b] = pair.sel;
+              requestAnimationFrame(() => {
+                try {
+                  ta.setSelectionRange(a, b);
+                } catch {
+                  /* ok */
+                }
+              });
+            }
+            return;
+          }
+        }
       }
       return;
     }
