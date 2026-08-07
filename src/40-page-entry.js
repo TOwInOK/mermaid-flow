@@ -662,11 +662,6 @@ function FlowPage() {
                 children: jsx(Codicon, { name: "add" }),
               }),
               jsx(ToolbarButton, {
-                tip: "Reload folder",
-                onClick: () => void refreshList(),
-                children: jsx(Codicon, { name: "refresh" }),
-              }),
-              jsx(ToolbarButton, {
                 tip: `Folder: ${relDir}`,
                 onClick: () => {
                   setFolderDraft(relDir);
