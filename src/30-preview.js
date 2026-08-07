@@ -541,10 +541,11 @@ function SvgCanvas({ svg, fitKey }) {
     }
   }, [diagramBounds]);
 
-  // Re-pin after SVG replacement; gesture paths paint directly.
+  // Re-pin + repaint after SVG replacement; gesture paths paint directly.
   useEffect(() => {
     normalizeSvgEl();
-  }, [safeSvg, normalizeSvgEl]);
+    paintDom(viewRef.current);
+  }, [safeSvg, normalizeSvgEl, paintDom]);
 
   const zoomBy = useCallback(
     (factor) => {

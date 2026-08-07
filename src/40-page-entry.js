@@ -375,7 +375,7 @@ function FlowPage() {
         if (gen === genRef.current) setBusy((b) => (b === "render" ? "" : b));
       });
     return () => ac.abort();
-  }, [debounced]);
+  }, [debounced, activePath]);
 
   const onSourceChange = (e) => {
     setSource(e.target.value);
