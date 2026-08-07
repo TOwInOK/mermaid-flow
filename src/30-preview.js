@@ -370,6 +370,8 @@ function SvgCanvas({ svg, fitKey }) {
   const contentRef = useRef(null);
   const viewRef = useRef({ scale: 1, tx: 0, ty: 0 });
   const dragRef = useRef(null);
+  const paintFrameRef = useRef(0);
+  const pendingPaintRef = useRef(null);
   // pan/zoom live in viewRef + paintDom; chrome % via $previewChrome (no useState)
   const [grabbing, setGrabbing] = useState(false);
   const lastFitKey = useRef(null);
@@ -389,6 +391,20 @@ function SvgCanvas({ svg, fitKey }) {
     el.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.scale})`;
     el.style.transformOrigin = "0 0";
   }, []);
+
+  const schedulePaint = useCallback(
+    (v) => {
+      pendingPaintRef.current = v;
+      if (paintFrameRef.current) return;
+      paintFrameRef.current = requestAnimationFrame(() => {
+        paintFrameRef.current = 0;
+        const next = pendingPaintRef.current;
+        pendingPaintRef.current = null;
+        if (next) paintDom(next);
+      });
+    },
+    [paintDom],
+  );
 
   const pushChrome = useCallback((pct) => {
     const a = chromeActionsRef.current;
@@ -418,7 +434,7 @@ function SvgCanvas({ svg, fitKey }) {
     (next) => {
       const v = { scale: clampZoom(next.scale), tx: next.tx, ty: next.ty };
       viewRef.current = v;
-      paintDom(v);
+      schedulePaint(v);
       const now = Date.now();
       // ponytail: throttle 100ms chrome; rAF batch if still janky
       if (now - chromePctAt.current >= 100) {
@@ -426,7 +442,7 @@ function SvgCanvas({ svg, fitKey }) {
         pushChrome(Math.round(v.scale * 100));
       }
     },
-    [paintDom, pushChrome],
+    [schedulePaint, pushChrome],
   );
 
   const resetView = useCallback(
@@ -525,11 +541,10 @@ function SvgCanvas({ svg, fitKey }) {
     }
   }, [diagramBounds]);
 
-  // Re-pin + re-paint after every commit (innerHTML / state). No setState here.
+  // Re-pin after SVG replacement; gesture paths paint directly.
   useEffect(() => {
     normalizeSvgEl();
-    paintDom(viewRef.current);
-  });
+  }, [safeSvg, normalizeSvgEl]);
 
   const zoomBy = useCallback(
     (factor) => {
@@ -596,6 +611,10 @@ function SvgCanvas({ svg, fitKey }) {
       ro?.disconnect();
     };
   }, [svg, fitKey, normalizeSvgEl, fitView]);
+
+  useEffect(() => () => {
+    if (paintFrameRef.current) cancelAnimationFrame(paintFrameRef.current);
+  }, []);
 
   useEffect(() => {
     const el = viewportRef.current;
