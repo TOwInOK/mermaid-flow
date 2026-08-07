@@ -270,6 +270,26 @@ function FlowPage() {
     [clearActiveEditor],
   );
 
+  // Same active path, disk changed (agent/editor outside) — pull if clean.
+  // Skip dirty / pending autosave so local edits win.
+  const reloadActiveFromDisk = useCallback(async () => {
+    const path = activePathRef.current;
+    if (!path || dirtyRef.current || saveTimer.current) return;
+    try {
+      const text = await fsReadText(path);
+      if (activePathRef.current !== path || dirtyRef.current) return;
+      const src = extractSource(text, baseName(path));
+      if (src === sourceRef.current) return;
+      genRef.current += 1;
+      setSource(src);
+      setDirty(false);
+      dirtyRef.current = false;
+      setRenderError("");
+    } catch {
+      /* missing: refreshList activeGone path */
+    }
+  }, []);
+
   const refreshList = useCallback(
     async ({ preferName, autoSelect = true } = {}) => {
       if (!cwd) {
@@ -289,6 +309,7 @@ function FlowPage() {
 
         if (!autoSelect) {
           if (activeGone) clearActiveEditor();
+          else await reloadActiveFromDisk();
           return;
         }
 
@@ -305,6 +326,7 @@ function FlowPage() {
 
         if (pick) {
           if (pick.path !== activePathRef.current) await loadFile(pick.path);
+          else await reloadActiveFromDisk();
         } else {
           clearActiveEditor();
         }
@@ -315,7 +337,7 @@ function FlowPage() {
         setBusy((b) => (b === "list" ? "" : b));
       }
     },
-    [cwd, diagramsDir, projectKey, loadFile, clearActiveEditor],
+    [cwd, diagramsDir, projectKey, loadFile, clearActiveEditor, reloadActiveFromDisk],
   );
 
   // Load list when dir / cwd changes
@@ -323,7 +345,7 @@ function FlowPage() {
     void refreshList();
   }, [refreshList]);
 
-  // Disk may change outside the plugin (files pane delete) — re-list on focus.
+  // Disk may change outside (agent / other editor / delete) — re-list + reload active if clean.
   useEffect(() => {
     const onFocus = () => void refreshList({ autoSelect: true });
     const onVis = () => {
