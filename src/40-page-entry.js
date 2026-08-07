@@ -46,15 +46,10 @@ function FlowPage() {
   const leftPaneRef = useRef(null);
   const sashDraggingRef = useRef(false);
 
-  useEffect(() => {
-    activePathRef.current = activePath;
-  }, [activePath]);
-  useEffect(() => {
-    sourceRef.current = source;
-  }, [source]);
-  useEffect(() => {
-    dirtyRef.current = dirty;
-  }, [dirty]);
+  // Render-time refs — loadFile/render effects must not see a stale source.
+  activePathRef.current = activePath;
+  sourceRef.current = source;
+  dirtyRef.current = dirty;
 
   // Split width via DOM only — React style.width would wipe live sash drag on re-render.
   useEffect(() => {
@@ -342,10 +337,11 @@ function FlowPage() {
     };
   }, [refreshList]);
 
-  // Render preview
+  // Trigger: debounced source (typing) OR activePath (Select).
+  // Body always from sourceRef — never re-paint the *previous* file's debounced text.
   const debounced = useDebounced(source, 320);
   useEffect(() => {
-    const code = debounced.trim();
+    const code = sourceRef.current.trim();
     if (!code) {
       setSvg("");
       setVia("");
@@ -748,7 +744,8 @@ function FlowPage() {
                         : svg
                           ? jsx(SvgCanvas, {
                               svg,
-                              fitKey: activePath || "draft",
+                              // path + view + split%: layout/sash commit re-fits once
+                              fitKey: `${activePath || "draft"}|${view}|${splitPct}`,
                             })
                           : jsx("div", {
                               className: "relative min-h-0 flex-1",

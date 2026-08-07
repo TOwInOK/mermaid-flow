@@ -565,7 +565,7 @@ function SvgCanvas({ svg, fitKey }) {
     [commitView],
   );
 
-  // File switch → allow one auto-fit for the next successful SVG.
+  // File switch → one auto-fit for the next successful SVG (not while empty).
   useEffect(() => {
     const key = fitKey ?? "";
     if (lastFitKey.current === key) return;
@@ -576,26 +576,34 @@ function SvgCanvas({ svg, fitKey }) {
 
   // Auto-fit once per fitKey when SVG is ready. Retry until vp has size —
   // otherwise resetView(1,0,0) sticks: correct % , camera on first node.
+  // Do not mark fitted on empty/missing svg (unmount/remount path is fine;
+  // same-instance clear must not burn the one-shot fit for this key).
   useEffect(() => {
-    if (!svg) return;
+    if (!safeSvg) {
+      fittedForKey.current = null;
+      return;
+    }
     const key = fitKey ?? "";
     let cancelled = false;
     let tries = 0;
     const maxTries = 24;
+    let raf = 0;
 
     const attempt = () => {
+      raf = 0;
       if (cancelled) return;
       if (fittedForKey.current === key) return;
+      // fitView early-exits without svgEl / tiny vp — one retry path
       normalizeSvgEl();
       if (fitView()) {
         fittedForKey.current = key;
         return;
       }
       tries += 1;
-      if (tries < maxTries) requestAnimationFrame(attempt);
+      if (tries < maxTries) raf = requestAnimationFrame(attempt);
     };
 
-    const t = requestAnimationFrame(attempt);
+    raf = requestAnimationFrame(attempt);
     const el = viewportRef.current;
     let ro = null;
     if (typeof ResizeObserver !== "undefined" && el) {
@@ -608,10 +616,10 @@ function SvgCanvas({ svg, fitKey }) {
     }
     return () => {
       cancelled = true;
-      cancelAnimationFrame(t);
+      if (raf) cancelAnimationFrame(raf);
       ro?.disconnect();
     };
-  }, [svg, fitKey, normalizeSvgEl, fitView]);
+  }, [safeSvg, fitKey, normalizeSvgEl, fitView]);
 
   useEffect(() => () => {
     if (paintFrameRef.current) cancelAnimationFrame(paintFrameRef.current);
