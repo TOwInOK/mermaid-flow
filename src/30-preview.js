@@ -370,9 +370,7 @@ function SvgCanvas({ svg, fitKey }) {
   const contentRef = useRef(null);
   const viewRef = useRef({ scale: 1, tx: 0, ty: 0 });
   const dragRef = useRef(null);
-  const [scale, setScale] = useState(1);
-  const [tx, setTx] = useState(0);
-  const [ty, setTy] = useState(0);
+  // pan/zoom live in viewRef + paintDom; chrome % via $previewChrome (no useState)
   const [grabbing, setGrabbing] = useState(false);
   const lastFitKey = useRef(null);
   const fittedForKey = useRef(null);
@@ -403,15 +401,12 @@ function SvgCanvas({ svg, fitKey }) {
     });
   }, []);
 
-  // Commit React state (gesture end / Fit / reset). Mid-gesture uses paintDom only.
+  // Gesture end / Fit / reset: ref + DOM + chrome. Mid-gesture: liveView (paintDom only).
   const commitView = useCallback(
     (next) => {
       const v = { scale: clampZoom(next.scale), tx: next.tx, ty: next.ty };
       viewRef.current = v;
       paintDom(v);
-      setScale(v.scale);
-      setTx(v.tx);
-      setTy(v.ty);
       chromePctAt.current = Date.now();
       pushChrome(Math.round(v.scale * 100));
     },
@@ -654,7 +649,7 @@ function SvgCanvas({ svg, fitKey }) {
     if (!dragRef.current) return;
     dragRef.current = null;
     setGrabbing(false);
-    // one React commit after pan
+    // flush chrome % after pan (DOM already painted by liveView)
     commitView(viewRef.current);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);

@@ -21,7 +21,7 @@ Project-backed Mermaid editor + live preview.
 | `00-preamble.js` | One import block (`@hermes/plugin-sdk`, `react`, `jsx-runtime`), ZOOM/DEFAULT/STORAGE, `let storage`/`os`, `$previewChrome` atom. |
 | `10-core.js` | `bridge`, path join/resolve, `fs*`, `normalizeMermaidSource` / `packSource`, drop-path helpers. No UI. |
 | `20-syntax-editor.js` | Overlay highlighter + completion catalog + **MermaidEditor** (history, paste, line-cut, Ctrl+Space). Keep together. |
-| `30-preview.js` | `renderRemoteSvg` (mermaid.ink → kroki), `sanitizeSvg`, sash, **SvgCanvas**, Preview/Source chrome. Keep sanitize next to canvas. |
+| `30-preview.js` | `renderRemoteSvg` (mermaid.ink → kroki), `sanitizeSvg`, sash, **SvgCanvas** + zoom overlay. Keep sanitize next to canvas. |
 | `40-page-entry.js` | **FlowPage** (list/load/autosave/DnD/toolbar) + `export default` `register`. |
 
 **Order matters:** `00 → 10 → 20 → 30 → 40` (shared top-level scope after expand, not ESM).
@@ -60,10 +60,13 @@ Needs desktop with `@include` support in `runtime-loader` (expand before Blob im
 
 ## UI
 
-- Hermes `Select` + `Dialog` + `Input` + `Button` + `GlyphSpinner`
-- Спиннер в углу при загрузке/рендере (не на весь canvas)
-- Pan/zoom на preview
-- Preview: mermaid.ink → kroki.io
+- Toolbar: `Select` + icon buttons (`add` / `refresh` / `folder`) + `statusBadge` + `SegmentedControl` (source | split | preview)
+- **Нет** SOURCE/PREVIEW pane headers — decluttered
+- Zoom chip: `absolute top-2 right-2` **поверх** `SvgCanvas` (не в header)
+- `GlyphSpinner` в углу при list/load/render
+- Pan/zoom на preview (wheel / drag / dblclick fit)
+- Remote SVG: mermaid.ink → kroki.io
+- Autosave ~550ms (force-save hotkey/icon — нет)
 
 ## Folder config
 
