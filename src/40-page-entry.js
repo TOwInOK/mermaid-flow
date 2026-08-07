@@ -40,6 +40,9 @@ function FlowPage() {
   const [folderDraft, setFolderDraft] = useState(relDir);
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
+  // Bumps on every successful loadFile so same-path drop/Select re-runs preview
+  // (effect deps are only debounced+activePath otherwise → setSvg("") sticks).
+  const [fileLoadId, setFileLoadId] = useState(0);
 
   const genRef = useRef(0);
   const saveTimer = useRef(null);
@@ -273,6 +276,7 @@ function FlowPage() {
         setRenderError("");
         setActivePath(path);
         setSource(src);
+        setFileLoadId((n) => n + 1);
         setDirty(false);
         dirtyRef.current = false;
       } catch (err) {
@@ -380,7 +384,7 @@ function FlowPage() {
     };
   }, [refreshList]);
 
-  // Trigger: debounced source (typing) OR activePath (Select).
+  // Trigger: debounced source (typing) OR activePath (Select) OR fileLoadId (drop/load).
   // Body always from sourceRef — never re-paint the *previous* file's debounced text.
   const debounced = useDebounced(source, 320);
   useEffect(() => {
@@ -414,7 +418,7 @@ function FlowPage() {
         if (gen === genRef.current) setBusy((b) => (b === "render" ? "" : b));
       });
     return () => ac.abort();
-  }, [debounced, activePath]);
+  }, [debounced, activePath, fileLoadId]);
 
   const onSourceChange = (e) => {
     setSource(e.target.value);
