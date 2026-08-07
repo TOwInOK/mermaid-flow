@@ -1,78 +1,100 @@
-# Mermaid Flow (Hermes Desktop plugin)
+# Mermaid Flow
 
-Project-backed Mermaid editor + live preview.
+Mermaid Flow is a Hermes Desktop plugin for editing Mermaid diagrams as ordinary project files and previewing them live. Keep architecture, API, and UX flows next to the code instead of in a separate drawing tool.
 
-## Path
+- **Project-backed.** Default folder `{cwd}/docs/mermaid`, overridable per project.
+- **Live preview.** Remote SVG via `mermaid.ink`, then `kroki.io`.
+- **Split workflow.** Source | split | preview with a draggable sash.
+- **Editor.** Syntax highlight, Mermaid completions, history, line cut/copy/delete/duplicate.
+- **Canvas.** Pan, wheel zoom to cursor, double-click fit.
+- **Formats.** Writes `*.mmd`; also reads `*.md` and `*.mermaid`.
+- **Autosave.** Debounced ~`550 ms`.
 
-```text
-~/.hermes/desktop-plugins/mermaid-flow/
-  plugin.js                 # entry only — list of // @include (loader expands)
-  src/
-    00-preamble.js          # imports, consts, storage/os, $previewChrome
-    10-core.js              # path/FS, normalize/pack, hermes DnD helpers
-    20-syntax-editor.js     # GH palette, highlight, completions, MermaidEditor
-    30-preview.js           # remote SVG, sanitize, sash, SvgCanvas, chrome
-    40-page-entry.js        # FlowPage (autosave/list/UI) + export default
+## Example
+
+```mermaid
+flowchart LR
+    Editor[Mermaid Flow] --> Disk["docs/mermaid/*.mmd"]
+    Editor --> Remote[mermaid.ink / kroki.io]
+    Remote --> Preview[Live SVG]
 ```
 
-| File | For |
-|------|-----|
-| `plugin.js` | Ship entry Hermes reads/watches. Only `@include` lines (+ banner). |
-| `00-preamble.js` | One import block (`@hermes/plugin-sdk`, `react`, `jsx-runtime`), ZOOM/DEFAULT/STORAGE, `let storage`/`os`, `$previewChrome` atom. |
-| `10-core.js` | `bridge`, path join/resolve, `fs*`, `normalizeMermaidSource` / `packSource`, drop-path helpers. No UI. |
-| `20-syntax-editor.js` | Overlay highlighter + completion catalog + **MermaidEditor** (history, paste, line-cut, Ctrl+Space). Keep together. |
-| `30-preview.js` | `renderRemoteSvg` (mermaid.ink → kroki), `sanitizeSvg`, sash, **SvgCanvas** + zoom overlay. Keep sanitize next to canvas. |
-| `40-page-entry.js` | **FlowPage** (list/load/autosave/DnD/toolbar) + `export default` `register`. |
+## Install
 
-**Order matters:** `00 → 10 → 20 → 30 → 40` (shared top-level scope after expand, not ESM).
+Desktop loads `$HERMES_HOME/desktop-plugins/mermaid-flow/plugin.js` (folder name = `id`).
 
-Edit **`src/*.js`**. Hermes Desktop expands whole-line `// @include ./rel.js` when reading `plugin.js`. Frag + entry saves hot-reload after the desktop build that ships the loader change.
+```sh
+mkdir -p ~/.hermes/desktop-plugins
+git clone https://github.com/TOwInOK/mermaid-flow.git ~/.hermes/desktop-plugins/mermaid-flow
+```
 
-Needs desktop with `@include` support in `runtime-loader` (expand before Blob import).
+Update / remove:
 
-## Use
+```sh
+git -C ~/.hermes/desktop-plugins/mermaid-flow pull
+rm -rf ~/.hermes/desktop-plugins/mermaid-flow
+```
 
-1. Открой проект (`cwd` установлен)
-2. `Reload desktop plugins`
-3. Sidebar → **Mermaid Flow** (или `mod+shift+m`)
-4. Схемы в папке **`docs/mermaid`** (настраиваемо на проект)
-5. Выбери схему · `+` новая · иконка папки для смены пути
+Local copy / symlink (dev):
 
-## Hotkeys
+```sh
+mkdir -p ~/.hermes/desktop-plugins/mermaid-flow
+cp -R . ~/.hermes/desktop-plugins/mermaid-flow/
+# or: ln -sfn "$(pwd)" ~/.hermes/desktop-plugins/mermaid-flow
+```
 
-| Key                    | Action                          |
-| ---------------------- | ------------------------------- |
-| `Ctrl/Cmd + X`         | Cut line (if nothing selected)  |
-| `Ctrl/Cmd + C`         | Copy line (if nothing selected) |
-| `Ctrl/Cmd + Shift + K` | Delete line                     |
-| `Ctrl/Cmd + D`         | Duplicate line                  |
-| `Tab`                  | Autocomplete keyword            |
-| `Ctrl/Cmd + Space`     | Completions                     |
+After install: **Reload desktop plugins** → open a project → sidebar **Mermaid Flow** (`Mod+Shift+M`).
+
+## Requirements
+
+- Hermes Desktop with `// @include` support in `runtime-loader` (includes expand before import).
+- Network access to `mermaid.ink` or `kroki.io` for SVG preview.
+- Allowed imports only: `@hermes/plugin-sdk`, `react`, `react/jsx-runtime` (no npm build step).
+
+## Editor shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl/Cmd + X` | Cut current line when nothing is selected |
+| `Ctrl/Cmd + C` | Copy current line when nothing is selected |
+| `Ctrl/Cmd + Shift + K` | Delete current line |
+| `Ctrl/Cmd + D` | Duplicate line / selection |
+| `Tab` | Accept autocomplete suggestion |
+| `Ctrl/Cmd + Space` | Open full completions |
+| `Mod+Shift+M` | Open Mermaid Flow |
 
 ## Storage
 
-|                    |                                             |
-| ------------------ | ------------------------------------------- |
-| Default folder     | `{cwd}/docs/mermaid`                        |
-| Files              | `*.mmd` (читает также `*.md` / `*.mermaid`) |
-| Per-project folder | хранится в storage по `cwd`                 |
-| Autosave           | debounced ~550ms                            |
+| | |
+| --- | --- |
+| Default folder | `{cwd}/docs/mermaid` |
+| Files | write `*.mmd`; read `*.mmd` / `*.md` / `*.mermaid` |
+| Per-project path | Hermes storage keyed by `cwd` |
+| Autosave | ~`550 ms` debounce |
 
-## UI
+Folder dialog:
 
-- Toolbar: `Select` + icon buttons (`add` / `refresh` / `folder`) + `statusBadge` + `SegmentedControl` (source | split | preview)
-- **Нет** SOURCE/PREVIEW pane headers — decluttered
-- Zoom chip: `absolute top-2 right-2` **поверх** `SvgCanvas` (не в header)
-- `GlyphSpinner` в углу при list/load/render
-- Pan/zoom на preview (wheel / drag / dblclick fit)
-- Remote SVG: mermaid.ink → kroki.io
-- Autosave ~550ms (force-save hotkey/icon — нет)
+- Relative path (from `cwd`) or absolute
+- **Browse** — native picker
+- **Reveal** — create folder if needed, open in file manager
+- **Reset default** — restore `docs/mermaid`
 
-## Folder config
+## Source layout
 
-Кнопка папки → диалог:
+```text
+plugin.js                 # entry only: banner + // @include lines
+src/
+  00-preamble.js          # imports, constants, storage/os, $previewChrome
+  10-core.js              # paths, FS helpers, normalize/pack, DnD
+  20-syntax-editor.js     # highlight, completions, MermaidEditor
+  30-preview.js           # mermaid.ink → kroki, sanitize, sash, SvgCanvas
+  40-page-entry.js        # FlowPage + export default register
+```
 
-- relative path (от `cwd`) или абсолютный
-- **Browse** — нативный picker
-- **Reveal** — создаёт папку и открывает файл-менеджер
-- **Reset default** → `docs/mermaid`
+Include order (shared top-level scope after expand — not separate ESM modules):
+
+```text
+00-preamble.js → 10-core.js → 20-syntax-editor.js → 30-preview.js → 40-page-entry.js
+```
+
+Edit `src/*.js`. Hermes Desktop expands whole-line `// @include ./rel.js` when reading `plugin.js`; saves hot-reload after the loader change ships.
