@@ -267,20 +267,27 @@ const SPLIT_MIN = 18;
 const SPLIT_MAX = 82;
 
 /**
- * Vertical sash matching Hermes pane-shell (`tree-split.tsx` Sash):
- * 9px hit target, hairline at opacity-10 → full on hover, thicker
- * `--ui-sash-hover-border` band on hover. No grip dots.
+ * Sash matching Hermes pane-shell (`tree-split.tsx` Sash).
+ * orientation: vertical = side-by-side (col-resize), horizontal = stacked (row-resize).
  */
-function SplitSash({ onLivePct, onCommitPct, onReset }) {
+function SplitSash({ orientation = "vertical", onLivePct, onCommitPct, onReset }) {
+  const horiz = orientation === "horizontal";
   const [dragging, setDragging] = useState(false);
   const draggingRef = useRef(false);
   const lastPctRef = useRef(null);
 
   const measurePct = (e) => {
-    // Parent is the split row (source | sash | preview).
+    // Parent is the split row/col (source | sash | preview).
     const row = e.currentTarget.parentElement?.parentElement;
     if (!row) return null;
     const rect = row.getBoundingClientRect();
+    if (horiz) {
+      if (!(rect.height > 0)) return null;
+      return Math.min(
+        SPLIT_MAX,
+        Math.max(SPLIT_MIN, ((e.clientY - rect.top) / rect.height) * 100),
+      );
+    }
     if (!(rect.width > 0)) return null;
     return Math.min(
       SPLIT_MAX,
@@ -294,7 +301,7 @@ function SplitSash({ onLivePct, onCommitPct, onReset }) {
     e.currentTarget.setPointerCapture(e.pointerId);
     draggingRef.current = true;
     setDragging(true);
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = horiz ? "row-resize" : "col-resize";
     document.body.style.userSelect = "none";
   };
 
@@ -323,15 +330,20 @@ function SplitSash({ onLivePct, onCommitPct, onReset }) {
   };
 
   return jsx("div", {
-    className: "relative z-20 w-0 shrink-0 self-stretch",
+    className: cn(
+      "relative z-20 shrink-0",
+      horiz ? "h-0 w-full self-stretch" : "w-0 self-stretch",
+    ),
     children: jsxs("div", {
       role: "separator",
-      "aria-orientation": "vertical",
+      "aria-orientation": horiz ? "horizontal" : "vertical",
       "data-slot": "pane-resize-handle",
       title: "Drag to resize · double-click to reset",
       className: cn(
-        "group/sash absolute inset-y-0 left-0 z-20 w-[9px] -translate-x-1/2 cursor-col-resize",
-        "[-webkit-app-region:no-drag]",
+        "group/sash absolute z-20 [-webkit-app-region:no-drag]",
+        horiz
+          ? "inset-x-0 top-0 h-[9px] -translate-y-1/2 cursor-row-resize"
+          : "inset-y-0 left-0 w-[9px] -translate-x-1/2 cursor-col-resize",
       ),
       onPointerDown,
       onPointerMove,
@@ -342,21 +354,23 @@ function SplitSash({ onLivePct, onCommitPct, onReset }) {
         onReset?.();
       },
       children: [
-        // Persistent hairline — same token as pane-shell seams.
         jsx("span", {
           className: cn(
-            "pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2",
-            "bg-(--ui-stroke-secondary) transition-opacity duration-100",
+            "pointer-events-none absolute bg-(--ui-stroke-secondary) transition-opacity duration-100",
+            horiz
+              ? "inset-x-0 top-1/2 h-px -translate-y-1/2"
+              : "inset-y-0 left-1/2 w-px -translate-x-1/2",
             dragging
               ? "opacity-100"
               : "opacity-10 group-hover/sash:opacity-100",
           ),
         }),
-        // Hover / active grab band (vscode-sash-hover-size, default 4px).
         jsx("span", {
           className: cn(
-            "pointer-events-none absolute inset-y-0 left-1/2 w-(--vscode-sash-hover-size,0.25rem) -translate-x-1/2",
-            "bg-(--ui-sash-hover-border) transition-opacity duration-100",
+            "pointer-events-none absolute bg-(--ui-sash-hover-border) transition-opacity duration-100",
+            horiz
+              ? "inset-x-0 top-1/2 h-(--vscode-sash-hover-size,0.25rem) -translate-y-1/2"
+              : "inset-y-0 left-1/2 w-(--vscode-sash-hover-size,0.25rem) -translate-x-1/2",
             dragging ? "opacity-100" : "opacity-0 group-hover/sash:opacity-100",
           ),
         }),

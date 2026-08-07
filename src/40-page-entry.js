@@ -19,6 +19,10 @@ function FlowPage() {
   const [view, setView] = useState(
     () => storage?.get(STORAGE_VIEW, "split") || "split",
   );
+  const [splitOrient, setSplitOrient] = useState(() => {
+    const o = storage?.get(STORAGE_SPLIT_ORIENT, "vertical");
+    return o === "horizontal" ? "horizontal" : "vertical";
+  });
   const [splitPct, setSplitPct] = useState(() => {
     const n = Number(storage?.get(STORAGE_SPLIT, 50));
     return Number.isFinite(n)
@@ -51,18 +55,31 @@ function FlowPage() {
   sourceRef.current = source;
   dirtyRef.current = dirty;
 
-  // Split width via DOM only — React style.width would wipe live sash drag on re-render.
+  // Split size via DOM only — React style would wipe live sash drag on re-render.
   useEffect(() => {
     const el = leftPaneRef.current;
     if (!el) return;
     if (view === "split") {
-      if (!sashDraggingRef.current) el.style.width = `${splitPct}%`;
-      el.style.maxWidth = "100%";
+      if (!sashDraggingRef.current) {
+        if (splitOrient === "horizontal") {
+          el.style.width = "";
+          el.style.height = `${splitPct}%`;
+          el.style.maxHeight = "100%";
+          el.style.maxWidth = "";
+        } else {
+          el.style.height = "";
+          el.style.maxHeight = "";
+          el.style.width = `${splitPct}%`;
+          el.style.maxWidth = "100%";
+        }
+      }
     } else {
       el.style.width = "";
+      el.style.height = "";
       el.style.maxWidth = "";
+      el.style.maxHeight = "";
     }
-  }, [view, splitPct]);
+  }, [view, splitPct, splitOrient]);
 
   useEffect(() => {
     storage?.set(STORAGE_VIEW, view);
@@ -71,6 +88,10 @@ function FlowPage() {
   useEffect(() => {
     storage?.set(STORAGE_SPLIT, splitPct);
   }, [splitPct]);
+
+  useEffect(() => {
+    storage?.set(STORAGE_SPLIT_ORIENT, splitOrient);
+  }, [splitOrient]);
 
   // Persist per-project folder + active file (copy-on-write maps)
   useEffect(() => {
@@ -658,13 +679,40 @@ function FlowPage() {
 
           jsx("div", { className: "flex-1" }),
 
-          jsx(SegmentedControl, {
-            value: view,
-            onChange: (v) => setView(v),
-            options: [
-              { id: "split", label: "", icon: icons.LayoutDashboard },
-              { id: "source", label: "", icon: icons.FileText },
-              { id: "preview", label: "", icon: icons.Eye },
+          jsxs("div", {
+            className: "flex items-center gap-1",
+            children: [
+              jsx(SegmentedControl, {
+                value: view,
+                onChange: (v) => setView(v),
+                options: [
+                  { id: "split", label: "", icon: icons.LayoutDashboard },
+                  { id: "source", label: "", icon: icons.FileText },
+                  { id: "preview", label: "", icon: icons.Eye },
+                ],
+              }),
+              // Appears only in split: vertical (side-by-side) | horizontal (stacked)
+              view === "split"
+                ? jsx(SegmentedControl, {
+                    value: splitOrient,
+                    onChange: (v) =>
+                      setSplitOrient(
+                        v === "horizontal" ? "horizontal" : "vertical",
+                      ),
+                    options: [
+                      {
+                        id: "vertical",
+                        label: "",
+                        icon: icons.PanelLeftIcon,
+                      },
+                      {
+                        id: "horizontal",
+                        label: "",
+                        icon: icons.PanelBottom,
+                      },
+                    ],
+                  })
+                : null,
             ],
           }),
         ],
@@ -683,7 +731,11 @@ function FlowPage() {
         : jsxs("div", {
             className: cn(
               "relative flex min-h-0 flex-1",
-              view === "split" ? "flex-row" : "flex-col",
+              view === "split"
+                ? splitOrient === "horizontal"
+                  ? "flex-col"
+                  : "flex-row"
+                : "flex-col",
             ),
             children: [
               showEditor
@@ -693,7 +745,7 @@ function FlowPage() {
                       "flex min-h-0 min-w-0 flex-col",
                       view === "split" ? "shrink-0" : "flex-1",
                     ),
-                    // width via effect + sash refs (not React style — mid-drag re-render wipe)
+                    // size via effect + sash refs (not React style — mid-drag re-render wipe)
                     children: [
                       // no SOURCE label / saved chip — editor fills
                       !activePath && !files.length
@@ -728,10 +780,16 @@ function FlowPage() {
 
               view === "split" && showEditor && showPreview
                 ? jsx(SplitSash, {
+                    orientation: splitOrient,
                     onLivePct: (pct) => {
                       sashDraggingRef.current = true;
                       const el = leftPaneRef.current;
-                      if (el) el.style.width = `${pct}%`;
+                      if (!el) return;
+                      if (splitOrient === "horizontal") {
+                        el.style.height = `${pct}%`;
+                      } else {
+                        el.style.width = `${pct}%`;
+                      }
                     },
                     onCommitPct: (pct) => {
                       sashDraggingRef.current = false;
@@ -740,7 +798,10 @@ function FlowPage() {
                     onReset: () => {
                       sashDraggingRef.current = false;
                       const el = leftPaneRef.current;
-                      if (el) el.style.width = "50%";
+                      if (el) {
+                        if (splitOrient === "horizontal") el.style.height = "50%";
+                        else el.style.width = "50%";
+                      }
                       setSplitPct(50);
                     },
                   })
@@ -750,7 +811,7 @@ function FlowPage() {
                 ? jsxs("div", {
                     className: cn(
                       "relative flex min-h-0 min-w-0 flex-col",
-                      view === "split" ? "min-w-0 flex-1" : "flex-1",
+                      view === "split" ? "min-h-0 min-w-0 flex-1" : "flex-1",
                     ),
                     children: [
                       !source.trim()
@@ -766,8 +827,8 @@ function FlowPage() {
                         : svg
                           ? jsx(SvgCanvas, {
                               svg,
-                              // path + view + split%: layout/sash commit re-fits once
-                              fitKey: `${activePath || "draft"}|${view}|${splitPct}`,
+                              // path + view + orient + split%: layout/sash commit re-fits once
+                              fitKey: `${activePath || "draft"}|${view}|${splitOrient}|${splitPct}`,
                             })
                           : jsx("div", {
                               className: "relative min-h-0 flex-1",

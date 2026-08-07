@@ -56,7 +56,8 @@ const DEFAULT_SOURCE = `flowchart TD
 const $previewChrome = atom(null);
 
 const STORAGE_VIEW = "view";
-const STORAGE_SPLIT = "splitPct"; // 0..100 left pane share
+const STORAGE_SPLIT = "splitPct"; // 0..100 first-pane share
+const STORAGE_SPLIT_ORIENT = "splitOrient"; // vertical | horizontal
 const STORAGE_DIRS = "projectDirs"; // { [cwd]: relativeOrAbsolute }
 const STORAGE_ACTIVE = "projectActive"; // { [cwd]: fileName }
 
