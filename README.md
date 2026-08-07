@@ -10,7 +10,7 @@ Mermaid Flow is a Hermes Desktop plugin for editing Mermaid diagrams as ordinary
 - **Formats.** Writes `*.mmd`; also reads `*.md` and `*.mermaid`.
 - **Autosave.** Debounced ~`550 ms`.
 
-## Example
+## Flow
 
 ```mermaid
 flowchart LR
@@ -53,24 +53,24 @@ After install: **Reload desktop plugins** → open a project → sidebar **Merma
 
 ## Editor shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl/Cmd + X` | Cut current line when nothing is selected |
-| `Ctrl/Cmd + C` | Copy current line when nothing is selected |
-| `Ctrl/Cmd + Shift + K` | Delete current line |
-| `Ctrl/Cmd + D` | Duplicate line / selection |
-| `Tab` | Accept autocomplete suggestion |
-| `Ctrl/Cmd + Space` | Open full completions |
-| `Mod+Shift+M` | Open Mermaid Flow |
+| Shortcut               | Action                                     |
+| ---------------------- | ------------------------------------------ |
+| `Ctrl/Cmd + X`         | Cut current line when nothing is selected  |
+| `Ctrl/Cmd + C`         | Copy current line when nothing is selected |
+| `Ctrl/Cmd + Shift + K` | Delete current line                        |
+| `Ctrl/Cmd + D`         | Duplicate line / selection                 |
+| `Tab`                  | Accept autocomplete suggestion             |
+| `Ctrl/Cmd + Space`     | Open full completions                      |
+| `Mod+Shift+M`          | Open Mermaid Flow                          |
 
 ## Storage
 
-| | |
-| --- | --- |
-| Default folder | `{cwd}/docs/mermaid` |
-| Files | write `*.mmd`; read `*.mmd` / `*.md` / `*.mermaid` |
-| Per-project path | Hermes storage keyed by `cwd` |
-| Autosave | ~`550 ms` debounce |
+|                  |                                                    |
+| ---------------- | -------------------------------------------------- |
+| Default folder   | `{cwd}/docs/mermaid`                               |
+| Files            | write `*.mmd`; read `*.mmd` / `*.md` / `*.mermaid` |
+| Per-project path | Hermes storage keyed by `cwd`                      |
+| Autosave         | ~`550 ms` debounce                                 |
 
 Folder dialog:
 
