@@ -5,8 +5,30 @@ Project-backed Mermaid editor + live preview.
 ## Path
 
 ```text
-~/.hermes/desktop-plugins/mermaid-flow/plugin.js
+~/.hermes/desktop-plugins/mermaid-flow/
+  plugin.js                 # entry only — list of // @include (loader expands)
+  src/
+    00-preamble.js          # imports, consts, storage/os, $previewChrome
+    10-core.js              # path/FS, normalize/pack, hermes DnD helpers
+    20-syntax-editor.js     # GH palette, highlight, completions, MermaidEditor
+    30-preview.js           # remote SVG, sanitize, sash, SvgCanvas, chrome
+    40-page-entry.js        # FlowPage (autosave/list/UI) + export default
 ```
+
+| File | For |
+|------|-----|
+| `plugin.js` | Ship entry Hermes reads/watches. Only `@include` lines (+ banner). |
+| `00-preamble.js` | One import block (`@hermes/plugin-sdk`, `react`, `jsx-runtime`), ZOOM/DEFAULT/STORAGE, `let storage`/`os`, `$previewChrome` atom. |
+| `10-core.js` | `bridge`, path join/resolve, `fs*`, `normalizeMermaidSource` / `packSource`, drop-path helpers. No UI. |
+| `20-syntax-editor.js` | Overlay highlighter + completion catalog + **MermaidEditor** (history, paste, line-cut, Ctrl+Space). Keep together. |
+| `30-preview.js` | `renderRemoteSvg` (mermaid.ink → kroki), `sanitizeSvg`, sash, **SvgCanvas**, Preview/Source chrome. Keep sanitize next to canvas. |
+| `40-page-entry.js` | **FlowPage** (list/load/autosave/DnD/toolbar) + `export default` `register`. |
+
+**Order matters:** `00 → 10 → 20 → 30 → 40` (shared top-level scope after expand, not ESM).
+
+Edit **`src/*.js`**. Hermes Desktop expands whole-line `// @include ./rel.js` when reading `plugin.js`. Frag + entry saves hot-reload after the desktop build that ships the loader change.
+
+Needs desktop with `@include` support in `runtime-loader` (expand before Blob import).
 
 ## Use
 
