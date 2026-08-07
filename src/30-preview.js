@@ -459,11 +459,6 @@ function SvgCanvas({ svg, fitKey }) {
     [schedulePaint, pushChrome],
   );
 
-  const resetView = useCallback(
-    () => commitView({ scale: 1, tx: 0, ty: 0 }),
-    [commitView],
-  );
-
   /** Mermaid ships viewBox as the true diagram frame; getBBox can be node-local
    *  or FO-incomplete and then auto-fit zooms to 250% on the first node. */
   const diagramBounds = useCallback((svgEl) => {
@@ -498,6 +493,42 @@ function SvgCanvas({ svg, fitKey }) {
     return null;
   }, []);
 
+  // Pin size + center at scale. fitView caps ≤1; reset = exactly 100% centered.
+  const placeAtScale = useCallback(
+    (scale) => {
+      const vp = viewportRef.current;
+      const content = contentRef.current;
+      if (!vp || !content) return false;
+      const svgEl = content.querySelector("svg");
+      if (!svgEl) return false;
+      const b = diagramBounds(svgEl);
+      if (!b || !(b.w > 0 && b.h > 0)) return false;
+      const vpW = vp.clientWidth;
+      const vpH = vp.clientHeight;
+      if (!(vpW > 8 && vpH > 8)) return false;
+
+      svgEl.style.maxWidth = "none";
+      svgEl.style.width = `${b.w}px`;
+      svgEl.style.height = `${b.h}px`;
+      svgEl.setAttribute("width", String(b.w));
+      svgEl.setAttribute("height", String(b.h));
+
+      const s = clampZoom(scale);
+      commitView({
+        scale: s,
+        tx: (vpW - b.w * s) / 2 - b.ox * s,
+        ty: (vpH - b.h * s) / 2 - b.oy * s,
+      });
+      return true;
+    },
+    [commitView, diagramBounds],
+  );
+
+  // 100% zoom, diagram centered (not origin 0,0).
+  const resetView = useCallback(() => {
+    if (!placeAtScale(1)) commitView({ scale: 1, tx: 0, ty: 0 });
+  }, [placeAtScale, commitView]);
+
   const fitView = useCallback(() => {
     const vp = viewportRef.current;
     const content = contentRef.current;
@@ -506,18 +537,10 @@ function SvgCanvas({ svg, fitKey }) {
     if (!svgEl) return false;
     const b = diagramBounds(svgEl);
     if (!b || !(b.w > 0 && b.h > 0)) return false;
-
     const vpW = vp.clientWidth;
     const vpH = vp.clientHeight;
     // Not laid out yet — caller retries (rAF / ResizeObserver).
     if (!(vpW > 8 && vpH > 8)) return false;
-
-    // Pin 1 CSS px = 1 viewBox unit (sanitizeSvg also bakes this into HTML).
-    svgEl.style.maxWidth = "none";
-    svgEl.style.width = `${b.w}px`;
-    svgEl.style.height = `${b.h}px`;
-    svgEl.setAttribute("width", String(b.w));
-    svgEl.setAttribute("height", String(b.h));
 
     const pad = 32;
     const nextScale = clampZoom(
@@ -527,14 +550,8 @@ function SvgCanvas({ svg, fitKey }) {
         1,
       ),
     );
-    // viewBox origin (usually 0,0) — center the pinned box in the viewport.
-    commitView({
-      scale: nextScale,
-      tx: (vpW - b.w * nextScale) / 2 - b.ox * nextScale,
-      ty: (vpH - b.h * nextScale) / 2 - b.oy * nextScale,
-    });
-    return true;
-  }, [commitView, diagramBounds]);
+    return placeAtScale(nextScale);
+  }, [diagramBounds, placeAtScale]);
 
   const normalizeSvgEl = useCallback(() => {
     const svgEl = contentRef.current?.querySelector("svg");
