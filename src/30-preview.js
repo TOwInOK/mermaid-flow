@@ -173,20 +173,51 @@ function sanitizeSvg(raw) {
     };
     scrubAttrs(root);
     walk(root);
-    // mermaid width/height 100% breaks pan/zoom framing
-    if (root.getAttribute("width") === "100%") root.removeAttribute("width");
-    if (root.getAttribute("height") === "100%") root.removeAttribute("height");
-    const st = root.getAttribute("style");
-    if (st && /max-width/i.test(st)) {
-      root.setAttribute(
-        "style",
-        st
-          .split(";")
-          .map((p) => p.trim())
-          .filter((p) => p && !/^max-width\s*:/i.test(p))
-          .join("; "),
-      );
+    // mermaid width="100%" + max-width:Npx fights pan/zoom. Pin CSS px = viewBox
+    // units in the HTML string so React re-applying innerHTML cannot wipe the pin
+    // (runtime-only pin was lost on commitView → wrong camera, correct %).
+    const vbRaw = root.getAttribute("viewBox") || root.getAttribute("viewbox");
+    let pinned = false;
+    if (vbRaw) {
+      const p = String(vbRaw)
+        .trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      if (
+        p.length === 4 &&
+        p.every((n) => Number.isFinite(n)) &&
+        p[2] > 0 &&
+        p[3] > 0
+      ) {
+        root.setAttribute("width", String(p[2]));
+        root.setAttribute("height", String(p[3]));
+        pinned = true;
+      }
     }
+    if (!pinned) {
+      if (root.getAttribute("width") === "100%") root.removeAttribute("width");
+      if (root.getAttribute("height") === "100%") root.removeAttribute("height");
+    }
+    const st = root.getAttribute("style") || "";
+    const cleaned = st
+      .split(";")
+      .map((part) => part.trim())
+      .filter(
+        (part) =>
+          part &&
+          !/^max-width\s*:/i.test(part) &&
+          !/^width\s*:/i.test(part) &&
+          !/^height\s*:/i.test(part),
+      );
+    if (pinned) {
+      const p = String(vbRaw)
+        .trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      cleaned.push(`width: ${p[2]}px`, `height: ${p[3]}px`, "max-width: none");
+    }
+    if (cleaned.length) root.setAttribute("style", cleaned.join("; "));
+    else root.removeAttribute("style");
     return new XMLSerializer().serializeToString(root);
   } catch {
     return "";
@@ -361,11 +392,6 @@ function SvgCanvas({ svg, fitKey }) {
     el.style.transformOrigin = "0 0";
   }, []);
 
-  // Parent re-renders (source/svg) must not wipe mid-gesture DOM transform.
-  useEffect(() => {
-    paintDom(viewRef.current);
-  });
-
   const pushChrome = useCallback((pct) => {
     const a = chromeActionsRef.current;
     $previewChrome.set({
@@ -413,52 +439,102 @@ function SvgCanvas({ svg, fitKey }) {
     [commitView],
   );
 
+  /** Mermaid ships viewBox as the true diagram frame; getBBox can be node-local
+   *  or FO-incomplete and then auto-fit zooms to 250% on the first node. */
+  const diagramBounds = useCallback((svgEl) => {
+    if (!svgEl) return null;
+    const vb = svgEl.getAttribute("viewBox") || svgEl.getAttribute("viewbox");
+    if (vb) {
+      const p = String(vb)
+        .trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      if (p.length === 4 && p.every((n) => Number.isFinite(n)) && p[2] > 0 && p[3] > 0) {
+        return { ox: p[0], oy: p[1], w: p[2], h: p[3], via: "viewBox" };
+      }
+    }
+    try {
+      const box = svgEl.getBBox();
+      if (box.width > 0 && box.height > 0) {
+        return {
+          ox: box.x,
+          oy: box.y,
+          w: box.width,
+          h: box.height,
+          via: "bbox",
+        };
+      }
+    } catch {
+      /* FO / not laid out yet */
+    }
+    const w = svgEl.clientWidth || 0;
+    const h = svgEl.clientHeight || 0;
+    if (w > 0 && h > 0) return { ox: 0, oy: 0, w, h, via: "client" };
+    return null;
+  }, []);
+
   const fitView = useCallback(() => {
     const vp = viewportRef.current;
     const content = contentRef.current;
-    if (!vp || !content) return;
+    if (!vp || !content) return false;
     const svgEl = content.querySelector("svg");
-    if (!svgEl) return;
-    let w = 0;
-    let h = 0;
-    let ox = 0;
-    let oy = 0;
-    try {
-      const box = svgEl.getBBox();
-      w = box.width;
-      h = box.height;
-      ox = box.x;
-      oy = box.y;
-    } catch {
-      w = svgEl.clientWidth || 0;
-      h = svgEl.clientHeight || 0;
-    }
-    if (!(w > 0 && h > 0)) return;
+    if (!svgEl) return false;
+    const b = diagramBounds(svgEl);
+    if (!b || !(b.w > 0 && b.h > 0)) return false;
+
+    const vpW = vp.clientWidth;
+    const vpH = vp.clientHeight;
+    // Not laid out yet — caller retries (rAF / ResizeObserver).
+    if (!(vpW > 8 && vpH > 8)) return false;
+
+    // Pin 1 CSS px = 1 viewBox unit (sanitizeSvg also bakes this into HTML).
+    svgEl.style.maxWidth = "none";
+    svgEl.style.width = `${b.w}px`;
+    svgEl.style.height = `${b.h}px`;
+    svgEl.setAttribute("width", String(b.w));
+    svgEl.setAttribute("height", String(b.h));
+
     const pad = 32;
     const nextScale = clampZoom(
       Math.min(
-        (vp.clientWidth - pad * 2) / w,
-        (vp.clientHeight - pad * 2) / h,
-        2.5,
+        Math.max(1, vpW - pad * 2) / b.w,
+        Math.max(1, vpH - pad * 2) / b.h,
+        1,
       ),
     );
+    // viewBox origin (usually 0,0) — center the pinned box in the viewport.
     commitView({
       scale: nextScale,
-      tx: (vp.clientWidth - w * nextScale) / 2 - ox * nextScale,
-      ty: (vp.clientHeight - h * nextScale) / 2 - oy * nextScale,
+      tx: (vpW - b.w * nextScale) / 2 - b.ox * nextScale,
+      ty: (vpH - b.h * nextScale) / 2 - b.oy * nextScale,
     });
-  }, [commitView]);
+    return true;
+  }, [commitView, diagramBounds]);
 
   const normalizeSvgEl = useCallback(() => {
     const svgEl = contentRef.current?.querySelector("svg");
     if (!svgEl) return;
+    const b = diagramBounds(svgEl);
     svgEl.style.maxWidth = "none";
-    svgEl.style.width = "auto";
-    svgEl.style.height = "auto";
-    svgEl.removeAttribute("width");
-    if (svgEl.getAttribute("height") === "100%")
-      svgEl.removeAttribute("height");
-  }, []);
+    if (b) {
+      svgEl.style.width = `${b.w}px`;
+      svgEl.style.height = `${b.h}px`;
+      svgEl.setAttribute("width", String(b.w));
+      svgEl.setAttribute("height", String(b.h));
+    } else {
+      svgEl.style.width = "auto";
+      svgEl.style.height = "auto";
+      svgEl.removeAttribute("width");
+      if (svgEl.getAttribute("height") === "100%")
+        svgEl.removeAttribute("height");
+    }
+  }, [diagramBounds]);
+
+  // Re-pin + re-paint after every commit (innerHTML / state). No setState here.
+  useEffect(() => {
+    normalizeSvgEl();
+    paintDom(viewRef.current);
+  });
 
   const zoomBy = useCallback(
     (factor) => {
@@ -487,21 +563,44 @@ function SvgCanvas({ svg, fitKey }) {
     resetView();
   }, [fitKey, resetView]);
 
-  // Source edits re-render SVG — keep pan/zoom. Only normalize attributes.
-  // Auto-fit once per fitKey when SVG first becomes available.
+  // Auto-fit once per fitKey when SVG is ready. Retry until vp has size —
+  // otherwise resetView(1,0,0) sticks: correct % , camera on first node.
   useEffect(() => {
     if (!svg) return;
     const key = fitKey ?? "";
-    const t = requestAnimationFrame(() => {
+    let cancelled = false;
+    let tries = 0;
+    const maxTries = 24;
+
+    const attempt = () => {
+      if (cancelled) return;
+      if (fittedForKey.current === key) return;
       normalizeSvgEl();
-      paintDom(viewRef.current);
-      if (fittedForKey.current !== key) {
+      if (fitView()) {
         fittedForKey.current = key;
-        requestAnimationFrame(() => fitView());
+        return;
       }
-    });
-    return () => cancelAnimationFrame(t);
-  }, [svg, fitKey, normalizeSvgEl, fitView, paintDom]);
+      tries += 1;
+      if (tries < maxTries) requestAnimationFrame(attempt);
+    };
+
+    const t = requestAnimationFrame(attempt);
+    const el = viewportRef.current;
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && el) {
+      ro = new ResizeObserver(() => {
+        if (cancelled || fittedForKey.current === key) return;
+        normalizeSvgEl();
+        if (fitView()) fittedForKey.current = key;
+      });
+      ro.observe(el);
+    }
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(t);
+      ro?.disconnect();
+    };
+  }, [svg, fitKey, normalizeSvgEl, fitView]);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -578,56 +677,45 @@ function SvgCanvas({ svg, fitKey }) {
     };
   }, [zoomBy, resetView, fitView, pushChrome]);
 
-  return jsx("div", {
-    className: "relative flex min-h-0 flex-1 flex-col",
-    children: jsx("div", {
-      ref: viewportRef,
-      className: cn(
-        "relative min-h-0 flex-1 overflow-hidden touch-none",
-        grabbing ? "cursor-grabbing" : "cursor-grab",
-      ),
-      onPointerDown,
-      onPointerMove,
-      onPointerUp: endDrag,
-      onPointerCancel: endDrag,
-      onDoubleClick: (e) => {
-        e.preventDefault();
-        fitView();
-      },
-      children: jsx("div", {
-        ref: contentRef,
-        className: "origin-top-left will-change-transform select-none",
-        style: {
-          transformOrigin: "0 0",
-        },
-        dangerouslySetInnerHTML: { __html: safeSvg },
-      }),
-    }),
-  });
-}
-
-/** Shared pane header — same height/padding for SOURCE and PREVIEW. */
-function PaneHeader({ title, right }) {
   return jsxs("div", {
-    className:
-      "flex h-9 shrink-0 items-center justify-between gap-2 border-b border-(--ui-stroke-secondary)/30 px-3 text-[0.6875rem] uppercase tracking-wide text-(--ui-text-quaternary)",
+    className: "relative flex min-h-0 flex-1 flex-col",
     children: [
-      jsx("span", { className: "leading-none", children: title }),
       jsx("div", {
-        className: "flex h-7 items-center justify-end",
-        children: right || null,
+        ref: viewportRef,
+        className: cn(
+          "relative min-h-0 flex-1 overflow-hidden touch-none",
+          grabbing ? "cursor-grabbing" : "cursor-grab",
+        ),
+        onPointerDown,
+        onPointerMove,
+        onPointerUp: endDrag,
+        onPointerCancel: endDrag,
+        onDoubleClick: (e) => {
+          e.preventDefault();
+          fitView();
+        },
+        children: jsx("div", {
+          ref: contentRef,
+          className: "origin-top-left will-change-transform select-none",
+          style: {
+            transformOrigin: "0 0",
+          },
+          dangerouslySetInnerHTML: { __html: safeSvg },
+        }),
+      }),
+      // zoom chip floats over SVG (same corner as old header-right)
+      jsx("div", {
+        className: "pointer-events-auto absolute top-2 right-2 z-20",
+        children: jsx(PreviewChrome, {}),
       }),
     ],
   });
 }
 
-/** Zoom controls for the PREVIEW header row. */
+/** Zoom chip over the mermaid canvas. */
 function PreviewChrome() {
   const chrome = useValue($previewChrome);
-  if (!chrome) {
-    // Keep header height stable while canvas mounts.
-    return jsx("div", { className: "h-7 w-[7.5rem]" });
-  }
+  if (!chrome) return null;
   return jsxs("div", {
     className:
       "flex h-7 items-center gap-0.5 rounded-[5px] bg-(--ui-bg-tertiary)/90 px-1 shadow-sm backdrop-blur-sm",
@@ -657,29 +745,6 @@ function PreviewChrome() {
         tip: "Fit",
         onClick: () => chrome.fit(),
         children: jsx(Codicon, { name: "screen-full" }),
-      }),
-    ],
-  });
-}
-
-/** Status chip for SOURCE header — mirrors PreviewChrome footprint. */
-function SourceChrome({ dirty, onSave, disabled }) {
-  return jsxs("div", {
-    className:
-      "flex h-7 items-center gap-0.5 rounded-[5px] bg-(--ui-bg-tertiary)/90 px-1 shadow-sm backdrop-blur-sm",
-    children: [
-      jsx("span", {
-        className: cn(
-          "min-w-12 px-1.5 text-center text-[0.6875rem] tabular-nums normal-case",
-          dirty ? "text-(--ui-text-secondary)" : "text-(--ui-text-quaternary)",
-        ),
-        children: dirty ? "dirty" : "saved",
-      }),
-      jsx(ToolbarButton, {
-        tip: dirty ? "Save now" : "Saved",
-        disabled: disabled || !dirty,
-        onClick: onSave,
-        children: jsx(Codicon, { name: "save" }),
       }),
     ],
   });

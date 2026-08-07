@@ -1387,11 +1387,6 @@ function MermaidEditor({ value, onChange, disabled, placeholder }) {
             }),
           })
         : null,
-      jsx("div", {
-        className:
-          "pointer-events-none absolute bottom-1 right-2 z-20 text-[0.65rem] text-(--ui-text-quaternary)/80",
-        children: "↑↓ · Tab · Ctrl+Space",
-      }),
     ],
   });
 }

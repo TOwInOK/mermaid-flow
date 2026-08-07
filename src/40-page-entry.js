@@ -194,46 +194,86 @@ function FlowPage() {
     };
   }, []);
 
-  const loadFile = useCallback(async (path) => {
-    if (!path) return;
-    // save previous first
+  const clearActiveEditor = useCallback(() => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    if (
-      dirtyRef.current &&
-      activePathRef.current &&
-      activePathRef.current !== path
-    ) {
+    saveGenRef.current++;
+    genRef.current += 1;
+    setActivePath("");
+    setSource("");
+    setSvg("");
+    setVia("");
+    setRenderError("");
+    setDirty(false);
+    dirtyRef.current = false;
+    try {
+      const map = { ...(storage?.get(STORAGE_ACTIVE, {}) || {}) };
+      if (map[projectKey]) {
+        delete map[projectKey];
+        storage?.set(STORAGE_ACTIVE, map);
+      }
+    } catch {
+      /* ok */
+    }
+  }, [projectKey]);
+
+  const loadFile = useCallback(
+    async (path) => {
+      if (!path) return;
+      // save previous first
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      if (
+        dirtyRef.current &&
+        activePathRef.current &&
+        activePathRef.current !== path
+      ) {
+        try {
+          await fsWriteText(
+            activePathRef.current,
+            packSource(sourceRef.current, baseName(activePathRef.current)),
+          );
+          setDirty(false);
+          dirtyRef.current = false;
+        } catch {
+          /* keep going */
+        }
+      }
+
+      setBusy("file");
+      setFsError("");
       try {
-        await fsWriteText(
-          activePathRef.current,
-          packSource(sourceRef.current, baseName(activePathRef.current)),
-        );
+        const text = await fsReadText(path);
+        const src = extractSource(text, baseName(path));
+        // Drop stale preview so SvgCanvas remounts / re-fits for the new file.
+        // Bump gen so an in-flight render for the previous source can't land.
+        genRef.current += 1;
+        setSvg("");
+        setVia("");
+        setRenderError("");
+        setActivePath(path);
+        setSource(src);
         setDirty(false);
         dirtyRef.current = false;
-      } catch {
-        /* keep going */
+      } catch (err) {
+        // Gone from disk → drop from Select + clear editor if it was active.
+        setFiles((prev) => prev.filter((f) => f.path !== path));
+        if (activePathRef.current === path) clearActiveEditor();
+        setFsError(err?.message || String(err));
+        host.notify({
+          kind: "error",
+          message: err?.message || "Read failed (file missing?)",
+        });
+      } finally {
+        setBusy((b) => (b === "file" ? "" : b));
       }
-    }
-
-    setBusy("file");
-    setFsError("");
-    try {
-      const text = await fsReadText(path);
-      const src = extractSource(text, baseName(path));
-      setActivePath(path);
-      setSource(src);
-      setDirty(false);
-      dirtyRef.current = false;
-    } catch (err) {
-      setFsError(err?.message || String(err));
-      host.notify({ kind: "error", message: err?.message || "Read failed" });
-    } finally {
-      setBusy((b) => (b === "file" ? "" : b));
-    }
-  }, []);
+    },
+    [clearActiveEditor],
+  );
 
   const refreshList = useCallback(
     async ({ preferName, autoSelect = true } = {}) => {
@@ -248,25 +288,30 @@ function FlowPage() {
         const list = await listDiagramFiles(diagramsDir);
         setFiles(list);
 
-        if (!autoSelect) return;
+        const activeGone =
+          !!activePathRef.current &&
+          !list.some((f) => f.path === activePathRef.current);
+
+        if (!autoSelect) {
+          if (activeGone) clearActiveEditor();
+          return;
+        }
 
         const remembered = (storage?.get(STORAGE_ACTIVE, {}) || {})[projectKey];
+        const stillThere = list.find((f) => f.path === activePathRef.current);
         const pick =
           (preferName &&
             list.find(
               (f) => f.name === preferName || f.label === preferName,
             )) ||
+          stillThere ||
           list.find((f) => f.name === remembered) ||
-          list.find((f) => f.path === activePathRef.current) ||
           list[0];
 
         if (pick) {
           if (pick.path !== activePathRef.current) await loadFile(pick.path);
         } else {
-          setActivePath("");
-          setSource("");
-          setSvg("");
-          setDirty(false);
+          clearActiveEditor();
         }
       } catch (err) {
         setFiles([]);
@@ -275,12 +320,26 @@ function FlowPage() {
         setBusy((b) => (b === "list" ? "" : b));
       }
     },
-    [cwd, diagramsDir, projectKey, loadFile],
+    [cwd, diagramsDir, projectKey, loadFile, clearActiveEditor],
   );
 
   // Load list when dir / cwd changes
   useEffect(() => {
     void refreshList();
+  }, [refreshList]);
+
+  // Disk may change outside the plugin (files pane delete) — re-list on focus.
+  useEffect(() => {
+    const onFocus = () => void refreshList({ autoSelect: true });
+    const onVis = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [refreshList]);
 
   // Render preview
@@ -394,23 +453,6 @@ function FlowPage() {
     }
   };
 
-  const copySource = async () => {
-    const ok = os ? await os.writeClipboard(source) : false;
-    host.notify({
-      kind: ok ? "success" : "error",
-      message: ok ? "Source copied" : "Clipboard unavailable",
-    });
-  };
-
-  const copySvg = async () => {
-    if (!svg) return;
-    const ok = os ? await os.writeClipboard(svg) : false;
-    host.notify({
-      kind: ok ? "success" : "error",
-      message: ok ? "SVG copied" : "Clipboard unavailable",
-    });
-  };
-
   /** Open a path dropped from the files tree (or OS). Mermaid-like only. */
   const openExternalPath = useCallback(
     async (path) => {
@@ -490,7 +532,6 @@ function FlowPage() {
 
   const showEditor = view === "split" || view === "source";
   const showPreview = view === "split" || view === "preview";
-  const activeFile = files.find((f) => f.path === activePath);
   const spinnerShow =
     busy === "list" ||
     busy === "file" ||
@@ -538,27 +579,12 @@ function FlowPage() {
           })
         : null,
 
-      // toolbar
+      // toolbar — file chrome left, view mode icons right
       jsxs("div", {
         className:
           "flex flex-wrap items-center gap-2 border-b border-(--ui-stroke-secondary)/40 px-3 py-2",
         children: [
-          jsxs("div", {
-            className: "flex items-center gap-2 min-w-0",
-            children: [
-              jsx(Codicon, {
-                name: "type-hierarchy-sub",
-                className: "text-(--ui-text-tertiary)",
-              }),
-              jsx("div", {
-                className: "text-sm font-medium shrink-0",
-                children: "Mermaid Flow",
-              }),
-              statusBadge,
-            ],
-          }),
-
-          // diagram selector + create
+          statusBadge,
           jsxs("div", {
             className: "flex items-center gap-1 min-w-0",
             children: [
@@ -612,44 +638,15 @@ function FlowPage() {
             ],
           }),
 
-          jsx("div", {
-            className:
-              "text-[0.6875rem] text-(--ui-text-quaternary) truncate max-w-[28%]",
-            children: activeFile ? activeFile.name : relDir,
-          }),
-
           jsx("div", { className: "flex-1" }),
 
           jsx(SegmentedControl, {
             value: view,
             onChange: (v) => setView(v),
             options: [
-              { id: "split", label: "Split" },
-              { id: "source", label: "Source" },
-              { id: "preview", label: "Preview" },
-            ],
-          }),
-
-          jsxs("div", {
-            className: "flex items-center gap-1",
-            children: [
-              jsx(ToolbarButton, {
-                tip: "Save now",
-                disabled: !dirty || !activePath,
-                onClick: () => void flushSave(),
-                children: jsx(Codicon, { name: "save" }),
-              }),
-              jsx(ToolbarButton, {
-                tip: "Copy source",
-                onClick: copySource,
-                children: jsx(Codicon, { name: "copy" }),
-              }),
-              jsx(ToolbarButton, {
-                tip: "Copy SVG",
-                disabled: !svg,
-                onClick: copySvg,
-                children: "SVG",
-              }),
+              { id: "split", label: "", icon: icons.LayoutDashboard },
+              { id: "source", label: "", icon: icons.FileText },
+              { id: "preview", label: "", icon: icons.Eye },
             ],
           }),
         ],
@@ -680,14 +677,7 @@ function FlowPage() {
                     ),
                     // width via effect + sash refs (not React style — mid-drag re-render wipe)
                     children: [
-                      jsx(PaneHeader, {
-                        title: "source",
-                        right: jsx(SourceChrome, {
-                          dirty,
-                          disabled: !activePath,
-                          onSave: () => void flushSave(),
-                        }),
-                      }),
+                      // no SOURCE label / saved chip — editor fills
                       !activePath && !files.length
                         ? jsx("div", {
                             className:
@@ -745,10 +735,6 @@ function FlowPage() {
                       view === "split" ? "min-w-0 flex-1" : "flex-1",
                     ),
                     children: [
-                      jsx(PaneHeader, {
-                        title: "preview",
-                        right: jsx(PreviewChrome, {}),
-                      }),
                       !source.trim()
                         ? jsx("div", {
                             className:
@@ -776,12 +762,6 @@ function FlowPage() {
                 : null,
             ],
           }),
-
-      jsx("div", {
-        className:
-          "flex items-center gap-2 border-t border-(--ui-stroke-secondary)/40 px-3 py-1.5 text-[0.6875rem] text-(--ui-text-quaternary)",
-        children: `${diagramsDir}  ·  drag pan · wheel zoom · autosave .mmd`,
-      }),
 
       // New diagram dialog
       jsxs(Dialog, {

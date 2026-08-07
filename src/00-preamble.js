@@ -25,6 +25,7 @@ import {
   GlyphSpinner,
   haptic,
   host,
+  icons,
   Input,
   KEYBINDS_AREA,
   PALETTE_AREA,
