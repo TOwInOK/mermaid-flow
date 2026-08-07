@@ -25,7 +25,7 @@ Project-backed Mermaid editor + live preview.
 | `Ctrl/Cmd + Shift + K` | Delete line                     |
 | `Ctrl/Cmd + D`         | Duplicate line                  |
 | `Tab`                  | Autocomplete keyword            |
-| `Ctrl/Cmd + Enter`     | Open live Mermaid.live          |
+| `Ctrl/Cmd + Space`     | Completions                     |
 
 ## Storage
 

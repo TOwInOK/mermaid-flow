@@ -36,7 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
   SIDEBAR_NAV_AREA,
-  STATUSBAR_AREAS,
   Tip,
   useValue,
   atom
@@ -140,12 +139,11 @@ async function fsWriteText(path, content) {
   return b.writeTextFile(path, content)
 }
 
-/** Create dir tree (openDir mkdirs). Does NOT open file manager when skipOpen. */
+/** Ensure dir exists. open:true → openDir (mkdir + FM). open:false → silent mkdir if bridge has it; else one openDir (FM unavoidable — no silent mkdir on hermesDesktop). */
 async function fsEnsureDir(dir, { open = false } = {}) {
   const b = bridge()
   if (!b) throw new Error('Desktop bridge unavailable')
 
-  // Probe first — avoid opening FM if already there.
   try {
     const listed = await b.readDir(dir)
     if (!listed?.error) {
@@ -156,8 +154,21 @@ async function fsEnsureDir(dir, { open = false } = {}) {
     /* create below */
   }
 
+  // Silent mkdir ladder if present on bridge (none on current Desktop types).
+  const silent =
+    (typeof b.mkdir === 'function' && b.mkdir) ||
+    (typeof b.ensureDir === 'function' && b.ensureDir) ||
+    (typeof b.createDir === 'function' && b.createDir) ||
+    null
+  if (silent) {
+    const res = await silent.call(b, dir)
+    if (res && res.ok === false) throw new Error(res.error || 'mkdir failed')
+    if (open && b.openDir) await b.openDir(dir)
+    return true
+  }
+
   if (!b.openDir) throw new Error('Cannot create folder (openDir missing)')
-  // openDir = mkdir -p + optionally reveal. Always mkdirs; opens FM.
+  // ponytail: no silent mkdir on bridge; openDir = mkdir -p + FM (one call max)
   const res = await b.openDir(dir)
   if (res && res.ok === false) throw new Error(res.error || 'mkdir failed')
   return true
@@ -533,8 +544,6 @@ function highlightMermaidHtml(code, dark) {
       }
 
       // arrows / edges
-      const arrow = line.slice(i).match(/^(-->|---|==>|-\.->|==>|->>|-->>|--o|--x|-\.-|~~|==|--)?>?|(\|[^|]*\|)/)
-      // simpler arrow match
       const arrow2 = line.slice(i).match(/^(-->|---|==>|-\.->|->>|-->>|--o|--x|-\.-x|-\.-|~~>|~~|==|--)|\|[^|\n]*\|/)
       if (arrow2) {
         html += span(p.constant, arrow2[0])
@@ -895,11 +904,10 @@ function caretClientOffset(ta, pos) {
  *  - Ctrl/Cmd+Space to open
  *  - ↑↓ / Enter|Tab / Esc
  */
-function MermaidEditor({ value, onChange, onPaste, disabled, placeholder }) {
+function MermaidEditor({ value, onChange, disabled, placeholder }) {
   const preRef = useRef(null)
   const taRef = useRef(null)
   const rootRef = useRef(null)
-  const [html, setHtml] = useState('')
   const pendingCaret = useRef(null)
   const [cm, setCm] = useState(
     /** @type {null | { items: MmCompletion[], idx: number, start: number, end: number, x: number, y: number }} */ (
@@ -926,12 +934,9 @@ function MermaidEditor({ value, onChange, onPaste, disabled, placeholder }) {
     coalesceAt: 0
   })
 
-  useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      setHtml(highlightMermaidHtml(value || '', isDarkUi()))
-    })
-    return () => cancelAnimationFrame(id)
-  }, [value])
+  // Overlay highlight — memo on value + theme flag (cheap tokenizer).
+  const darkUi = isDarkUi()
+  const html = useMemo(() => highlightMermaidHtml(value || '', darkUi), [value, darkUi])
 
   // Sync history when parent changes value externally (file switch, etc.).
   useEffect(() => {
@@ -1283,9 +1288,22 @@ function MermaidEditor({ value, onChange, onPaste, disabled, placeholder }) {
         placeholder: '',
         onChange: onInputChange,
         onPaste: (e) => {
-          // Paste is a discrete undo step
-          history.current.coalesceAt = 0
-          onPaste?.(e)
+          // Normalize + single history path (parent setSource around history was resetting stack).
+          const clip = e.clipboardData?.getData('text')
+          if (!clip) return
+          e.preventDefault()
+          e.stopPropagation()
+          const ta = taRef.current
+          const text = value || ''
+          const start = ta?.selectionStart ?? text.length
+          const end = ta?.selectionEnd ?? start
+          const merged = text.slice(0, start) + clip + text.slice(end)
+          const next = normalizeMermaidSource(merged)
+          // Caret after inserted (normalized) region — not EOF-only.
+          const inserted = next.length - (text.length - (end - start))
+          const caret = Math.max(0, Math.min(start + Math.max(0, inserted), next.length))
+          setCm(null)
+          emit(next, caret, { coalesce: false })
         },
         onKeyDown,
         onScroll: syncScroll,
@@ -1333,8 +1351,8 @@ function MermaidEditor({ value, onChange, onPaste, disabled, placeholder }) {
                   style: selected
                     ? {
                         background:
-                          'color-mix(in oklab, var(--ui-accent, #3b82f6) 32%, var(--ui-bg-tertiary, transparent))',
-                        boxShadow: 'inset 2px 0 0 var(--ui-accent, #3b82f6)'
+                          'color-mix(in oklab, var(--ui-accent) 32%, var(--ui-bg-tertiary, transparent))',
+                        boxShadow: 'inset 2px 0 0 var(--ui-accent)'
                       }
                     : undefined,
                   onMouseEnter: () => {
@@ -1394,8 +1412,8 @@ function isDarkUi() {
     const bg =
       getComputedStyle(document.body).backgroundColor ||
       getComputedStyle(document.documentElement).backgroundColor ||
-      'rgb(20,20,20)'
-    const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+      ''
+    const m = String(bg).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
     if (!m) return true
     const r = Number(m[1])
     const g = Number(m[2])
@@ -1469,14 +1487,94 @@ function clampZoom(z) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
 }
 
-function sanitizeSvg(svg) {
-  return svg
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/\son\w+="[^"]*"/gi, '')
-    .replace(/\son\w+='[^']*'/gi, '')
-    .replace(/\swidth="100%"/gi, '')
-    .replace(/\sheight="100%"/gi, '')
-    .replace(/\sstyle="max-width:\s*[^"]*"/gi, '')
+/** DOMParser sanitize for remote SVG (dangerouslySetInnerHTML).
+ * Keep foreignObject — mermaid htmlLabels live there; scrub kids only. */
+function sanitizeSvg(raw) {
+  const input = String(raw || '')
+  if (!input.trim()) return ''
+  try {
+    const doc = new DOMParser().parseFromString(input, 'image/svg+xml')
+    const parseErr = doc.querySelector('parsererror')
+    if (parseErr) return ''
+    const root = doc.documentElement
+    if (!root || String(root.tagName).toLowerCase() !== 'svg') return ''
+
+    // Kill active content; keep foreignObject (mermaid labels = HTML inside FO).
+    const DENY = new Set(['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input', 'button', 'textarea', 'select'])
+
+    const scrubAttrs = (node) => {
+      if (!node?.attributes) return
+      for (const attr of Array.from(node.attributes)) {
+        const name = attr.name
+        const lname = name.toLowerCase()
+        if (lname.startsWith('on') || lname === 'srcdoc') {
+          node.removeAttribute(name)
+          continue
+        }
+        if (
+          lname === 'href' ||
+          lname === 'xlink:href' ||
+          lname === 'src' ||
+          lname === 'action' ||
+          lname === 'formaction' ||
+          lname.endsWith(':href')
+        ) {
+          const v = String(attr.value || '').trim()
+          const low = v.toLowerCase()
+          // No scheme-relative //host — startsWith('/') alone would allow it.
+          const ok =
+            !v ||
+            low.startsWith('#') ||
+            (low.startsWith('/') && !low.startsWith('//')) ||
+            low.startsWith('./') ||
+            low.startsWith('../') ||
+            low.startsWith('http://') ||
+            low.startsWith('https://')
+          if (!ok) node.removeAttribute(name)
+        }
+        // style: drop expression()/url(javascript:...)
+        if (lname === 'style') {
+          const st = String(attr.value || '')
+          if (/expression\s*\(|javascript:|@import/i.test(st)) node.removeAttribute(name)
+        }
+      }
+    }
+
+    const walk = (el) => {
+      // childNodes: FO may hold text + HTML elements
+      const kids = Array.from(el.childNodes || [])
+      for (const child of kids) {
+        if (child.nodeType === 1 /* ELEMENT */) {
+          const tag = String(child.tagName || '').toLowerCase().replace(/^.*:/, '')
+          if (DENY.has(tag)) {
+            child.remove()
+            continue
+          }
+          scrubAttrs(child)
+          walk(child)
+        }
+      }
+    }
+    scrubAttrs(root)
+    walk(root)
+    // mermaid width/height 100% breaks pan/zoom framing
+    if (root.getAttribute('width') === '100%') root.removeAttribute('width')
+    if (root.getAttribute('height') === '100%') root.removeAttribute('height')
+    const st = root.getAttribute('style')
+    if (st && /max-width/i.test(st)) {
+      root.setAttribute(
+        'style',
+        st
+          .split(';')
+          .map((p) => p.trim())
+          .filter((p) => p && !/^max-width\s*:/i.test(p))
+          .join('; ')
+      )
+    }
+    return new XMLSerializer().serializeToString(root)
+  } catch {
+    return ''
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1523,9 +1621,19 @@ const SPLIT_MAX = 82
  * 9px hit target, hairline at opacity-10 → full on hover, thicker
  * `--ui-sash-hover-border` band on hover. No grip dots.
  */
-function SplitSash({ onDragPct, onReset }) {
+function SplitSash({ onLivePct, onCommitPct, onReset }) {
   const [dragging, setDragging] = useState(false)
   const draggingRef = useRef(false)
+  const lastPctRef = useRef(null)
+
+  const measurePct = (e) => {
+    // Parent is the split row (source | sash | preview).
+    const row = e.currentTarget.parentElement?.parentElement
+    if (!row) return null
+    const rect = row.getBoundingClientRect()
+    if (!(rect.width > 0)) return null
+    return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ((e.clientX - rect.left) / rect.width) * 100))
+  }
 
   const onPointerDown = (e) => {
     if (e.button !== 0) return
@@ -1539,13 +1647,10 @@ function SplitSash({ onDragPct, onReset }) {
 
   const onPointerMove = (e) => {
     if (!draggingRef.current) return
-    // Parent is the split row (source | sash | preview).
-    const row = e.currentTarget.parentElement?.parentElement
-    if (!row) return
-    const rect = row.getBoundingClientRect()
-    if (!(rect.width > 0)) return
-    const pct = ((e.clientX - rect.left) / rect.width) * 100
-    onDragPct(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, pct)))
+    const pct = measurePct(e)
+    if (pct == null) return
+    lastPctRef.current = pct
+    onLivePct?.(pct)
   }
 
   const endDrag = (e) => {
@@ -1554,6 +1659,9 @@ function SplitSash({ onDragPct, onReset }) {
     setDragging(false)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
+    const pct = lastPctRef.current ?? measurePct(e)
+    lastPctRef.current = null
+    if (pct != null) onCommitPct?.(pct)
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
@@ -1613,16 +1721,70 @@ function SvgCanvas({ svg, fitKey }) {
   const [grabbing, setGrabbing] = useState(false)
   const lastFitKey = useRef(null)
   const fittedForKey = useRef(null)
+  const chromePctAt = useRef(0)
+  const chromeActionsRef = useRef({
+    zoomIn: () => {},
+    zoomOut: () => {},
+    reset: () => {},
+    fit: () => {}
+  })
+  const safeSvg = useMemo(() => sanitizeSvg(svg), [svg])
 
-  const applyView = useCallback((next) => {
-    const v = { scale: clampZoom(next.scale), tx: next.tx, ty: next.ty }
-    viewRef.current = v
-    setScale(v.scale)
-    setTx(v.tx)
-    setTy(v.ty)
+  const paintDom = useCallback((v) => {
+    const el = contentRef.current
+    if (!el) return
+    el.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.scale})`
+    el.style.transformOrigin = '0 0'
   }, [])
 
-  const resetView = useCallback(() => applyView({ scale: 1, tx: 0, ty: 0 }), [applyView])
+  // Parent re-renders (source/svg) must not wipe mid-gesture DOM transform.
+  useEffect(() => {
+    paintDom(viewRef.current)
+  })
+
+  const pushChrome = useCallback((pct) => {
+    const a = chromeActionsRef.current
+    $previewChrome.set({
+      pct,
+      zoomIn: a.zoomIn,
+      zoomOut: a.zoomOut,
+      reset: a.reset,
+      fit: a.fit
+    })
+  }, [])
+
+  // Commit React state (gesture end / Fit / reset). Mid-gesture uses paintDom only.
+  const commitView = useCallback(
+    (next) => {
+      const v = { scale: clampZoom(next.scale), tx: next.tx, ty: next.ty }
+      viewRef.current = v
+      paintDom(v)
+      setScale(v.scale)
+      setTx(v.tx)
+      setTy(v.ty)
+      chromePctAt.current = Date.now()
+      pushChrome(Math.round(v.scale * 100))
+    },
+    [paintDom, pushChrome]
+  )
+
+  // Imperative mid-gesture: DOM + optional throttled chrome pct.
+  const liveView = useCallback(
+    (next) => {
+      const v = { scale: clampZoom(next.scale), tx: next.tx, ty: next.ty }
+      viewRef.current = v
+      paintDom(v)
+      const now = Date.now()
+      // ponytail: throttle 100ms chrome; rAF batch if still janky
+      if (now - chromePctAt.current >= 100) {
+        chromePctAt.current = now
+        pushChrome(Math.round(v.scale * 100))
+      }
+    },
+    [paintDom, pushChrome]
+  )
+
+  const resetView = useCallback(() => commitView({ scale: 1, tx: 0, ty: 0 }), [commitView])
 
   const fitView = useCallback(() => {
     const vp = viewportRef.current
@@ -1647,12 +1809,12 @@ function SvgCanvas({ svg, fitKey }) {
     if (!(w > 0 && h > 0)) return
     const pad = 32
     const nextScale = clampZoom(Math.min((vp.clientWidth - pad * 2) / w, (vp.clientHeight - pad * 2) / h, 2.5))
-    applyView({
+    commitView({
       scale: nextScale,
       tx: (vp.clientWidth - w * nextScale) / 2 - ox * nextScale,
       ty: (vp.clientHeight - h * nextScale) / 2 - oy * nextScale
     })
-  }, [applyView])
+  }, [commitView])
 
   const normalizeSvgEl = useCallback(() => {
     const svgEl = contentRef.current?.querySelector('svg')
@@ -1663,6 +1825,20 @@ function SvgCanvas({ svg, fitKey }) {
     svgEl.removeAttribute('width')
     if (svgEl.getAttribute('height') === '100%') svgEl.removeAttribute('height')
   }, [])
+
+  const zoomBy = useCallback(
+    (factor) => {
+      const el = viewportRef.current
+      const cur = viewRef.current
+      const rect = el?.getBoundingClientRect()
+      const mx = rect ? rect.width / 2 : 0
+      const my = rect ? rect.height / 2 : 0
+      const nextScale = clampZoom(cur.scale * factor)
+      const k = nextScale / cur.scale
+      commitView({ scale: nextScale, tx: mx - k * (mx - cur.tx), ty: my - k * (my - cur.ty) })
+    },
+    [commitView]
+  )
 
   // File switch → allow one auto-fit for the next successful SVG.
   useEffect(() => {
@@ -1680,13 +1856,14 @@ function SvgCanvas({ svg, fitKey }) {
     const key = fitKey ?? ''
     const t = requestAnimationFrame(() => {
       normalizeSvgEl()
+      paintDom(viewRef.current)
       if (fittedForKey.current !== key) {
         fittedForKey.current = key
         requestAnimationFrame(() => fitView())
       }
     })
     return () => cancelAnimationFrame(t)
-  }, [svg, fitKey, normalizeSvgEl, fitView])
+  }, [svg, fitKey, normalizeSvgEl, fitView, paintDom])
 
   useEffect(() => {
     const el = viewportRef.current
@@ -1698,7 +1875,7 @@ function SvgCanvas({ svg, fitKey }) {
       const my = e.clientY - rect.top
       const cur = viewRef.current
       if (e.shiftKey || e.altKey) {
-        applyView({
+        liveView({
           scale: cur.scale,
           tx: cur.tx + (e.shiftKey ? -e.deltaY : -e.deltaX),
           ty: cur.ty + (e.shiftKey ? 0 : -e.deltaY)
@@ -1709,11 +1886,11 @@ function SvgCanvas({ svg, fitKey }) {
       const factor = e.ctrlKey || e.metaKey ? Math.pow(direction, 0.55) : direction
       const nextScale = clampZoom(cur.scale * factor)
       const k = nextScale / cur.scale
-      applyView({ scale: nextScale, tx: mx - k * (mx - cur.tx), ty: my - k * (my - cur.ty) })
+      liveView({ scale: nextScale, tx: mx - k * (mx - cur.tx), ty: my - k * (my - cur.ty) })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [applyView])
+  }, [liveView])
 
   const onPointerDown = (e) => {
     if (e.button !== 0 && e.button !== 1) return
@@ -1725,7 +1902,7 @@ function SvgCanvas({ svg, fitKey }) {
   const onPointerMove = (e) => {
     const d = dragRef.current
     if (!d) return
-    applyView({
+    liveView({
       scale: viewRef.current.scale,
       tx: d.tx + (e.clientX - d.x),
       ty: d.ty + (e.clientY - d.y)
@@ -1735,6 +1912,8 @@ function SvgCanvas({ svg, fitKey }) {
     if (!dragRef.current) return
     dragRef.current = null
     setGrabbing(false)
+    // one React commit after pan
+    commitView(viewRef.current)
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
@@ -1742,32 +1921,19 @@ function SvgCanvas({ svg, fitKey }) {
     }
   }
 
-  const zoomBy = useCallback((factor) => {
-    const el = viewportRef.current
-    const cur = viewRef.current
-    const rect = el?.getBoundingClientRect()
-    const mx = rect ? rect.width / 2 : 0
-    const my = rect ? rect.height / 2 : 0
-    const nextScale = clampZoom(cur.scale * factor)
-    const k = nextScale / cur.scale
-    applyView({ scale: nextScale, tx: mx - k * (mx - cur.tx), ty: my - k * (my - cur.ty) })
-  }, [applyView])
-
-  const pct = Math.round(scale * 100)
-
-  // Publish chrome actions to the PREVIEW header (sibling, higher up).
+  // Wire chrome actions (stable via ref); pct from live/commit.
   useEffect(() => {
-    $previewChrome.set({
-      pct,
+    chromeActionsRef.current = {
       zoomIn: () => zoomBy(ZOOM_STEP),
       zoomOut: () => zoomBy(1 / ZOOM_STEP),
       reset: () => resetView(),
       fit: () => fitView()
-    })
+    }
+    pushChrome(Math.round(viewRef.current.scale * 100))
     return () => {
       $previewChrome.set(null)
     }
-  }, [pct, zoomBy, resetView, fitView])
+  }, [zoomBy, resetView, fitView, pushChrome])
 
   return jsx('div', {
     className: 'relative flex min-h-0 flex-1 flex-col',
@@ -1789,10 +1955,9 @@ function SvgCanvas({ svg, fitKey }) {
         ref: contentRef,
         className: 'origin-top-left will-change-transform select-none',
         style: {
-          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           transformOrigin: '0 0'
         },
-        dangerouslySetInnerHTML: { __html: sanitizeSvg(svg) }
+        dangerouslySetInnerHTML: { __html: safeSvg }
       })
     })
   })
@@ -1915,9 +2080,12 @@ function FlowPage() {
 
   const genRef = useRef(0)
   const saveTimer = useRef(null)
+  const saveGenRef = useRef(0)
   const activePathRef = useRef('')
   const sourceRef = useRef('')
   const dirtyRef = useRef(false)
+  const leftPaneRef = useRef(null)
+  const sashDraggingRef = useRef(false)
 
   useEffect(() => {
     activePathRef.current = activePath
@@ -1929,6 +2097,19 @@ function FlowPage() {
     dirtyRef.current = dirty
   }, [dirty])
 
+  // Split width via DOM only — React style.width would wipe live sash drag on re-render.
+  useEffect(() => {
+    const el = leftPaneRef.current
+    if (!el) return
+    if (view === 'split') {
+      if (!sashDraggingRef.current) el.style.width = `${splitPct}%`
+      el.style.maxWidth = '100%'
+    } else {
+      el.style.width = ''
+      el.style.maxWidth = ''
+    }
+  }, [view, splitPct])
+
   useEffect(() => {
     storage?.set(STORAGE_VIEW, view)
   }, [view])
@@ -1937,18 +2118,16 @@ function FlowPage() {
     storage?.set(STORAGE_SPLIT, splitPct)
   }, [splitPct])
 
-  // Persist per-project folder + active file
+  // Persist per-project folder + active file (copy-on-write maps)
   useEffect(() => {
     const map = storage?.get(STORAGE_DIRS, {}) || {}
-    map[projectKey] = relDir
-    storage?.set(STORAGE_DIRS, map)
+    storage?.set(STORAGE_DIRS, { ...map, [projectKey]: relDir })
   }, [projectKey, relDir])
 
   useEffect(() => {
     if (!activePath) return
     const map = storage?.get(STORAGE_ACTIVE, {}) || {}
-    map[projectKey] = baseName(activePath)
-    storage?.set(STORAGE_ACTIVE, map)
+    storage?.set(STORAGE_ACTIVE, { ...map, [projectKey]: baseName(activePath) })
   }, [projectKey, activePath])
 
   // When cwd changes, reload folder config
@@ -1957,28 +2136,98 @@ function FlowPage() {
     setRelDir(map[projectKey] || DEFAULT_REL_DIR)
   }, [projectKey])
 
+  const writeActiveIfDirty = useCallback(async () => {
+    const path = activePathRef.current
+    const body = sourceRef.current
+    if (!path || !dirtyRef.current) return false
+    const packed = packSource(body, baseName(path))
+    try {
+      await fsWriteText(path, packed)
+    } catch (err) {
+      const msg = err?.message || String(err)
+      if (/parent directory does not exist|ENOENT|not exist/i.test(msg)) {
+        const dir = path.replace(/[/\\][^/\\]+$/, '')
+        await fsEnsureDir(dir, { open: false })
+        await fsWriteText(path, packed)
+      } else {
+        throw err
+      }
+    }
+    return true
+  }, [])
+
   const flushSave = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
     const path = activePathRef.current
     const body = sourceRef.current
     if (!path || !dirtyRef.current) return
+    const gen = ++saveGenRef.current
     setBusy((b) => b || 'save')
     try {
-      await fsWriteText(path, packSource(body, baseName(path)))
+      await writeActiveIfDirty()
+      if (gen !== saveGenRef.current) return
+      if (activePathRef.current !== path || sourceRef.current !== body) return
       setDirty(false)
       dirtyRef.current = false
     } catch (err) {
-      host.notify({ kind: 'error', message: err?.message || 'Save failed' })
+      if (gen === saveGenRef.current) {
+        host.notify({ kind: 'error', message: err?.message || 'Save failed' })
+      }
     } finally {
-      setBusy((b) => (b === 'save' ? '' : b))
+      if (gen === saveGenRef.current) setBusy((b) => (b === 'save' ? '' : b))
     }
-  }, [])
+  }, [writeActiveIfDirty])
 
   const scheduleSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
+      saveTimer.current = null
       void flushSave()
     }, 550)
   }, [flushSave])
+
+  // Unmount / route leave: flush dirty without setState-after-unmount.
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current)
+        saveTimer.current = null
+      }
+      // Invalidate in-flight flushSave so it won't setState after unmount.
+      saveGenRef.current++
+      if (!dirtyRef.current || !activePathRef.current) return
+      const path = activePathRef.current
+      const body = sourceRef.current
+      const packed = packSource(body, baseName(path))
+      void (async () => {
+        try {
+          await fsWriteText(path, packed)
+          dirtyRef.current = false
+        } catch (err) {
+          try {
+            const msg = err?.message || String(err)
+            if (/parent directory does not exist|ENOENT|not exist/i.test(msg)) {
+              const dir = path.replace(/[/\\][^/\\]+$/, '')
+              await fsEnsureDir(dir, { open: false })
+              await fsWriteText(path, packed)
+              dirtyRef.current = false
+              return
+            }
+          } catch {
+            /* fall through */
+          }
+          try {
+            host.notify({ kind: 'error', message: err?.message || 'Save failed' })
+          } catch {
+            /* unmounting */
+          }
+        }
+      })()
+    }
+  }, [])
 
   const loadFile = useCallback(async (path) => {
     if (!path) return
@@ -2104,22 +2353,6 @@ function FlowPage() {
     if (activePath) scheduleSave()
   }
 
-  /** Paste from specs often includes fences / drops the diagram header. */
-  const onSourcePaste = (e) => {
-    const text = e.clipboardData?.getData('text')
-    if (!text) return
-    e.preventDefault()
-    const el = e.target
-    const start = el.selectionStart ?? source.length
-    const end = el.selectionEnd ?? start
-    const merged = source.slice(0, start) + text + source.slice(end)
-    const next = normalizeMermaidSource(merged)
-    setSource(next)
-    setDirty(true)
-    dirtyRef.current = true
-    if (activePath) scheduleSave()
-  }
-
   const createDiagram = async () => {
     const fileName = ensureMmdName(newName)
     if (!cwd) {
@@ -2129,10 +2362,7 @@ function FlowPage() {
     setBusy('create')
     try {
       await fsEnsureDir(diagramsDir, { open: false })
-      // openDir opens FM — only if dir was missing. Probe again & write.
-      // If parent still missing write will throw with clear error.
       const path = joinPath(diagramsDir, fileName)
-      // avoid clobber
       try {
         await fsReadText(path)
         host.notify({ kind: 'error', message: `${fileName} already exists` })
@@ -2140,31 +2370,13 @@ function FlowPage() {
       } catch {
         /* new file ok */
       }
-      const seed = DEFAULT_SOURCE
-      await fsWriteText(path, seed)
+      await fsWriteText(path, DEFAULT_SOURCE)
       setNewOpen(false)
       setNewName('')
       await refreshList({ preferName: fileName })
       host.notify({ kind: 'success', message: `Created ${fileName}` })
     } catch (err) {
-      // Parent missing: create via openDir (mkdir -p) then retry write once.
-      const msg = err?.message || String(err)
-      if (/parent directory does not exist|ENOENT|not exist/i.test(msg)) {
-        try {
-          await fsEnsureDir(diagramsDir, { open: true })
-          const path = joinPath(diagramsDir, fileName)
-          await fsWriteText(path, DEFAULT_SOURCE)
-          setNewOpen(false)
-          setNewName('')
-          await refreshList({ preferName: fileName })
-          host.notify({ kind: 'success', message: `Created folder + ${fileName}` })
-          return
-        } catch (err2) {
-          host.notify({ kind: 'error', message: err2?.message || 'Create failed' })
-          return
-        }
-      }
-      host.notify({ kind: 'error', message: msg })
+      host.notify({ kind: 'error', message: err?.message || 'Create failed' })
     } finally {
       setBusy((b) => (b === 'create' ? '' : b))
     }
@@ -2219,21 +2431,6 @@ function FlowPage() {
     if (!svg) return
     const ok = os ? await os.writeClipboard(svg) : false
     host.notify({ kind: ok ? 'success' : 'error', message: ok ? 'SVG copied' : 'Clipboard unavailable' })
-  }
-
-  const copyFence = async () => {
-    const fenced = '```mermaid\n' + source.trim() + '\n```\n'
-    const ok = os ? await os.writeClipboard(fenced) : false
-    host.notify({ kind: ok ? 'success' : 'error', message: ok ? 'Fenced block copied' : 'Clipboard unavailable' })
-  }
-
-  const openLive = async () => {
-    await copySource()
-    const ok = os ? await os.openExternal('https://mermaid.live/edit') : false
-    host.notify({
-      kind: ok ? 'info' : 'error',
-      message: ok ? 'mermaid.live opened — paste if needed' : 'openExternal failed'
-    })
   }
 
   /** Open a path dropped from the files tree (or OS). Mermaid-like only. */
@@ -2450,17 +2647,6 @@ function FlowPage() {
                 disabled: !svg,
                 onClick: copySvg,
                 children: 'SVG'
-              }),
-              jsx(ToolbarButton, {
-                tip: 'Copy fenced mermaid',
-                onClick: copyFence,
-                children: 'Fence'
-              }),
-              jsx(ToolbarButton, {
-                tip: 'Open mermaid.live',
-                variant: 'secondary',
-                onClick: openLive,
-                children: jsx(Codicon, { name: 'link-external' })
               })
             ]
           })
@@ -2481,14 +2667,12 @@ function FlowPage() {
             children: [
               showEditor
                 ? jsxs('div', {
+                    ref: leftPaneRef,
                     className: cn(
                       'flex min-h-0 min-w-0 flex-col',
                       view === 'split' ? 'shrink-0' : 'flex-1'
                     ),
-                    style:
-                      view === 'split'
-                        ? { width: `${splitPct}%`, maxWidth: '100%' }
-                        : undefined,
+                    // width via effect + sash refs (not React style — mid-drag re-render wipe)
                     children: [
                       jsx(PaneHeader, {
                         title: 'source',
@@ -2511,7 +2695,6 @@ function FlowPage() {
                         : jsx(MermaidEditor, {
                             value: source,
                             onChange: onSourceChange,
-                            onPaste: onSourcePaste,
                             disabled: !activePath,
                             placeholder: 'flowchart TD\n  A --> B'
                           }),
@@ -2528,8 +2711,21 @@ function FlowPage() {
 
               view === 'split' && showEditor && showPreview
                 ? jsx(SplitSash, {
-                    onDragPct: setSplitPct,
-                    onReset: () => setSplitPct(50)
+                    onLivePct: (pct) => {
+                      sashDraggingRef.current = true
+                      const el = leftPaneRef.current
+                      if (el) el.style.width = `${pct}%`
+                    },
+                    onCommitPct: (pct) => {
+                      sashDraggingRef.current = false
+                      setSplitPct(pct)
+                    },
+                    onReset: () => {
+                      sashDraggingRef.current = false
+                      const el = leftPaneRef.current
+                      if (el) el.style.width = '50%'
+                      setSplitPct(50)
+                    }
                   })
                 : null,
 
@@ -2692,27 +2888,6 @@ function FlowPage() {
   })
 }
 
-function StatusChip() {
-  return jsx(Tip, {
-    label: 'Open Mermaid Flow',
-    children: jsx('button', {
-      type: 'button',
-      className: cn(
-        'inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem] transition-colors',
-        'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
-      ),
-      onClick: () => {
-        haptic('tap')
-        host.navigate('/mermaid-flow')
-      },
-      children: jsxs('span', {
-        className: 'inline-flex items-center gap-1',
-        children: [jsx(Codicon, { name: 'type-hierarchy-sub' }), 'flow']
-      })
-    })
-  })
-}
-
 // ---------------------------------------------------------------------------
 // Plugin contract
 // ---------------------------------------------------------------------------
@@ -2764,12 +2939,6 @@ export default {
           defaults: ['mod+shift+m'],
           run: open
         }
-      },
-      {
-        id: 'chip',
-        area: STATUSBAR_AREAS.right,
-        order: 125,
-        render: () => jsx(StatusChip, {})
       }
     ])
   }
