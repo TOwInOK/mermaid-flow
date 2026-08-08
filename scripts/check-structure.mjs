@@ -50,7 +50,13 @@ assert.deepEqual(
 
 const all = files.map(([, source]) => source).join("\n");
 const editor = files.find(([file]) => file === "./src/40-editor.js")[1];
+const page = files.find(([file]) => file === "./src/60-flow-page.js")[1];
 assert.match(editor, /role: "listbox",[\s\S]*?bg-\(--ui-bg-elevated\)/);
+assert.match(page, /const runRender = useCallback/);
+assert.match(page, /name: "folder"[\s\S]*?icons\.RefreshCw/);
+assert.match(page, /icons\.Loader2/);
+assert.match(page, /icons\.StopFilled/);
+assert.match(page, /if \(rendering\) abortRender\(\)/);
 for (const symbol of ["IconSegmentedControl", "ToolbarButton", "let os", "os = ctx.os"]) {
   assert(!all.includes(symbol), `${symbol} remains`);
 }

@@ -59,7 +59,8 @@ function FlowPage() {
   const [via, setVia] = useState("");
   const [renderError, setRenderError] = useState("");
   const [fsError, setFsError] = useState("");
-  const [busy, setBusy] = useState(""); // '' | list | file | render | save | create
+  const [busy, setBusy] = useState(""); // '' | list | file | save | create
+  const [rendering, setRendering] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
@@ -71,6 +72,7 @@ function FlowPage() {
   const [fileLoadId, setFileLoadId] = useState(0);
 
   const genRef = useRef(0);
+  const renderAbortRef = useRef(null);
   const saveTimer = useRef(null);
   const saveGenRef = useRef(0);
   const activePathRef = useRef("");
@@ -96,7 +98,7 @@ function FlowPage() {
               ? "saving"
               : busy === "updating"
                 ? "updating"
-                : busy === "render"
+                : rendering
                   ? "rendering"
                   : dirty
                     ? "dirty"
@@ -107,7 +109,7 @@ function FlowPage() {
                         : "idle";
     const detail = renderError || fsError || (state === "ready" ? via : "");
     $flowStatus.set({ state, detail });
-  }, [busy, dirty, renderError, fsError, via]);
+  }, [busy, rendering, dirty, renderError, fsError, via]);
 
   useEffect(() => () => $flowStatus.set({ state: "idle", detail: "" }), []);
 
@@ -413,41 +415,64 @@ function FlowPage() {
     };
   }, [refreshList]);
 
+  const abortRender = useCallback((controller = renderAbortRef.current) => {
+    if (!controller || controller !== renderAbortRef.current) return;
+    controller.abort();
+    renderAbortRef.current = null;
+    genRef.current += 1;
+    setRendering(false);
+  }, []);
+
+  const runRender = useCallback(
+    (code) => {
+      abortRender();
+      const trimmed = code.trim();
+      if (!trimmed) {
+        setSvg("");
+        setVia("");
+        setRenderError("");
+        return null;
+      }
+
+      const gen = ++genRef.current;
+      const controller = new AbortController();
+      renderAbortRef.current = controller;
+      setRendering(true);
+      setRenderError("");
+      void renderRemoteSvg(trimmed, isDarkUi(), controller.signal)
+        .then((result) => {
+          if (gen !== genRef.current) return;
+          if (result.kind === "empty") {
+            setSvg("");
+            setVia("");
+            return;
+          }
+          setSvg(result.svg);
+          setVia(result.via || "");
+        })
+        .catch((err) => {
+          if (controller.signal.aborted || gen !== genRef.current) return;
+          setRenderError(err?.message || String(err));
+        })
+        .finally(() => {
+          if (gen !== genRef.current) return;
+          renderAbortRef.current = null;
+          setRendering(false);
+        });
+      return controller;
+    },
+    [abortRender],
+  );
+
+  useEffect(() => () => abortRender(), [abortRender]);
+
   // Trigger: debounced source (typing) OR activePath (Select) OR fileLoadId (drop/load).
   // Body always from sourceRef — never re-paint the *previous* file's debounced text.
   const debounced = useDebounced(source, 320);
   useEffect(() => {
-    const code = sourceRef.current.trim();
-    if (!code) {
-      setSvg("");
-      setVia("");
-      setRenderError("");
-      return;
-    }
-    const gen = ++genRef.current;
-    const ac = new AbortController();
-    setBusy((b) => (b === "file" || b === "list" ? b : "render"));
-    setRenderError("");
-    renderRemoteSvg(code, isDarkUi(), ac.signal)
-      .then((result) => {
-        if (gen !== genRef.current) return;
-        if (result.kind === "empty") {
-          setSvg("");
-          setVia("");
-          return;
-        }
-        setSvg(result.svg);
-        setVia(result.via || "");
-      })
-      .catch((err) => {
-        if (ac.signal.aborted || gen !== genRef.current) return;
-        setRenderError(err?.message || String(err));
-      })
-      .finally(() => {
-        if (gen === genRef.current) setBusy((b) => (b === "render" ? "" : b));
-      });
-    return () => ac.abort();
-  }, [debounced, activePath, fileLoadId]);
+    const controller = runRender(sourceRef.current);
+    return () => abortRender(controller);
+  }, [debounced, activePath, fileLoadId, runRender, abortRender]);
 
   const onSourceChange = (e) => {
     setSource(e.target.value);
@@ -679,6 +704,36 @@ function FlowPage() {
                     setFolderOpen(true);
                   },
                   children: jsx(Codicon, { name: "folder" }),
+                }),
+              }),
+              jsx(Tip, {
+                label: rendering ? "Stop rerender" : "Rerender",
+                children: jsx(Button, {
+                  type: "button",
+                  size: "icon-xs",
+                  variant: "ghost",
+                  className: "group",
+                  disabled: !rendering && !source.trim(),
+                  onClick: () => {
+                    haptic("tap");
+                    if (rendering) abortRender();
+                    else runRender(sourceRef.current);
+                  },
+                  children: rendering
+                    ? jsxs("span", {
+                        className: "relative size-3",
+                        children: [
+                          jsx(icons.Loader2, {
+                            className:
+                              "absolute inset-0 size-3 animate-spin group-hover:opacity-0",
+                          }),
+                          jsx(icons.StopFilled, {
+                            className:
+                              "absolute inset-0 size-3 opacity-0 group-hover:opacity-100",
+                          }),
+                        ],
+                      })
+                    : jsx(icons.RefreshCw, { className: "size-3" }),
                 }),
               }),
             ],
