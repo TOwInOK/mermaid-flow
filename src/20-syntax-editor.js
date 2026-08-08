@@ -30,9 +30,11 @@ const GH_LIGHT = {
 
 const MM_DIAGRAM = new Set([
   "flowchart",
+  "flowchart-elk",
   "graph",
   "sequenceDiagram",
   "classDiagram",
+  "classDiagram-v2",
   "stateDiagram",
   "stateDiagram-v2",
   "erDiagram",
@@ -49,13 +51,32 @@ const MM_DIAGRAM = new Set([
   "C4Deployment",
   "quadrantChart",
   "requirementDiagram",
+  "info",
   "xychart",
   "xychart-beta",
+  "block",
   "block-beta",
+  "sankey",
   "sankey-beta",
+  "packet",
   "packet-beta",
   "architecture-beta",
   "radar-beta",
+  "kanban",
+  "eventmodeling",
+  "treemap",
+  "treemap-beta",
+  "venn-beta",
+  "ishikawa",
+  "ishikawa-beta",
+  "wardley-beta",
+  "cynefin-beta",
+  "treeView-beta",
+  "swimlane-beta",
+  "railroad-beta",
+  "railroad-abnf-beta",
+  "railroad-ebnf-beta",
+  "railroad-peg-beta",
 ]);
 
 const MM_KEYWORD = new Set([
@@ -109,6 +130,102 @@ const MM_KEYWORD = new Set([
   "box",
   "accTitle",
   "accDescr",
+  "accDescription",
+  "create",
+  "destroy",
+  "option",
+  "namespace",
+  "cssClass",
+  "inclusiveEndDates",
+  "topAxis",
+  "tickInterval",
+  "x-axis",
+  "y-axis",
+  "bar",
+  "line",
+  "commit",
+  "branch",
+  "checkout",
+  "switch",
+  "merge",
+  "reset",
+  "tag",
+  "requirement",
+  "functionalRequirement",
+  "interfaceRequirement",
+  "performanceRequirement",
+  "physicalRequirement",
+  "designConstraint",
+  "element",
+  "contains",
+  "copies",
+  "derives",
+  "satisfies",
+  "verifies",
+  "refines",
+  "traces",
+  "Person",
+  "System",
+  "Boundary",
+  "Container",
+  "Component",
+  "Node",
+  "Deployment_Node",
+  "Rel",
+  "BiRel",
+  "RelIndex",
+  "UpdateElementStyle",
+  "UpdateRelStyle",
+  "UpdateLayoutConfig",
+  "group",
+  "service",
+  "in",
+  "junction",
+  "align",
+  "row",
+  "column",
+  "axis",
+  "curve",
+  "showLegend",
+  "max",
+  "min",
+  "graticule",
+  "ticks",
+  "tf",
+  "timeframe",
+  "ui",
+  "cmd",
+  "command",
+  "evt",
+  "event",
+  "processor",
+  "rmo",
+  "readmodel",
+  "pcr",
+  "rf",
+  "resetframe",
+  "entity",
+  "data",
+  "gwt",
+  "given",
+  "when",
+  "then",
+  "anchor",
+  "component",
+  "evolve",
+  "inertia",
+  "pipeline",
+  "annotation",
+  "complex",
+  "complicated",
+  "clear",
+  "chaotic",
+  "confusion",
+  "icon",
+  "columns",
+  "set",
+  "union",
+  "showInfo",
 ]);
 
 function escHtml(s) {
@@ -303,7 +420,7 @@ function highlightMermaidHtml(code, dark) {
 const EDITOR_FONT =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
 
-/** @typedef {{ label: string, insert: string, detail?: string, kind?: string }} MmCompletion */
+/** @typedef {{ label: string, insert: string, detail?: string, kind?: string, generated?: boolean }} MmCompletion */
 
 /**
  * `$0` in insert = caret landing spot after accept (stripped on insert).
@@ -334,6 +451,12 @@ const MM_COMPLETIONS = [
     label: "graph TD",
     insert: "graph TD\n  $0",
     detail: "Alias of flowchart",
+    kind: "diagram",
+  },
+  {
+    label: "flowchart-elk TD",
+    insert: "flowchart-elk TD\n  $0",
+    detail: "ELK flowchart",
     kind: "diagram",
   },
   {
@@ -416,6 +539,12 @@ const MM_COMPLETIONS = [
     detail: "Subgraph direction",
     kind: "kw",
   },
+  {
+    label: "class",
+    insert: "class $0 {\n  \n}",
+    detail: "Define / assign class",
+    kind: "kw",
+  },
   // sequence — $0 where you type next; ids filled from doc when possible
   {
     label: "participant",
@@ -495,6 +624,24 @@ const MM_COMPLETIONS = [
     detail: "Group participants",
     kind: "seq",
   },
+  {
+    label: "create",
+    insert: "create participant $0",
+    detail: "Create participant",
+    kind: "seq",
+  },
+  {
+    label: "destroy",
+    insert: "destroy $0",
+    detail: "Destroy participant",
+    kind: "seq",
+  },
+  {
+    label: "critical",
+    insert: "critical $0\n  \noption\n  \nend",
+    detail: "Critical block",
+    kind: "seq",
+  },
   // flowchart edges / nodes — shape only (type id before, or edit after)
   { label: "-->", insert: "-->", detail: "Arrow", kind: "edge" },
   { label: "---", insert: "---", detail: "Link (no arrow)", kind: "edge" },
@@ -552,6 +699,36 @@ const MM_COMPLETIONS = [
     kind: "kw",
   },
   {
+    label: "namespace",
+    insert: "namespace $0 {\n  \n}",
+    detail: "Class namespace",
+    kind: "class",
+  },
+  {
+    label: "cssClass",
+    insert: 'cssClass "$0" className',
+    detail: "Assign CSS class",
+    kind: "class",
+  },
+  {
+    label: "callback",
+    insert: 'callback $0 "handler"',
+    detail: "Class callback",
+    kind: "class",
+  },
+  {
+    label: "link",
+    insert: 'link $0 "https://"',
+    detail: "Class link",
+    kind: "class",
+  },
+  {
+    label: "note for",
+    insert: 'note for $0 ""',
+    detail: "Class note",
+    kind: "class",
+  },
+  {
     label: "style",
     insert: "style $0 fill:#bbf,stroke:#333",
     detail: "Inline style",
@@ -586,6 +763,54 @@ const MM_COMPLETIONS = [
     kind: "kw",
   },
 ];
+
+// Keep highlighting tokens and typed completions in sync; curated snippets win.
+const MM_ALL_COMPLETIONS = [...MM_COMPLETIONS];
+const mmCompletionLabels = new Set(MM_COMPLETIONS.map((c) => c.label));
+for (const token of MM_DIAGRAM) {
+  if (
+    MM_COMPLETIONS.some(
+      (c) =>
+        c.kind === "diagram" &&
+        (c.label === token || c.label.startsWith(`${token} `)),
+    )
+  )
+    continue;
+  mmCompletionLabels.add(token);
+  MM_ALL_COMPLETIONS.push({
+    label: token,
+    insert: `${token}\n  $0`,
+    detail: "Diagram starter",
+    kind: "diagram",
+    generated: true,
+  });
+}
+for (const token of MM_KEYWORD) {
+  if (mmCompletionLabels.has(token)) continue;
+  mmCompletionLabels.add(token);
+  MM_ALL_COMPLETIONS.push({
+    label: token,
+    insert: token,
+    detail: "Mermaid keyword",
+    kind: "kw",
+    generated: true,
+  });
+}
+
+const MM_CLASS_COMPLETION_LABELS = new Set([
+  "class",
+  "classDef",
+  "namespace",
+  "cssClass",
+  "callback",
+  "link",
+  "note for",
+  "style",
+  "click",
+  "direction",
+  "%% comment",
+  "%%{init}%%",
+]);
 
 /** Reserved words — never offered as document IDs. */
 const MM_RESERVED = new Set([
@@ -741,6 +966,17 @@ function applyPairBackspace(text, start, end) {
  */
 function completionPrefixAt(text, pos) {
   let j = pos;
+  let wordStart = pos;
+  while (wordStart > 0 && /[A-Za-z0-9_@.*%-]/.test(text[wordStart - 1]))
+    wordStart--;
+  const wordPrefix = text.slice(wordStart, pos);
+  if (
+    wordPrefix.includes("-") &&
+    [...MM_DIAGRAM, ...MM_KEYWORD].some((x) => x.startsWith(wordPrefix)) &&
+    (wordStart === 0 || /\s/.test(text[wordStart - 1]))
+  ) {
+    return { start: wordStart, prefix: wordPrefix, mode: "word" };
+  }
   if (j > 0 && /[-=~.>]/.test(text[j - 1])) {
     while (j > 0 && /[-=~.>]/.test(text[j - 1])) j--;
     return { start: j, prefix: text.slice(j, pos), mode: "edge" };
@@ -781,6 +1017,8 @@ function detectDiagramKind(text) {
   if (/erDiagram/i.test(head)) return "er";
   if (/flowchart|^\s*graph\b/im.test(head)) return "flow";
   if (/gantt/i.test(head)) return "gantt";
+  if (/gitGraph/i.test(head)) return "git";
+  if (/requirementDiagram/i.test(head)) return "requirement";
   return "";
 }
 
@@ -791,7 +1029,7 @@ function detectDiagramKind(text) {
 function scoreCompletion(c, p, mode) {
   if (!p) {
     if (mode === "edge") return c.kind === "edge" ? 0 : 100;
-    return c.kind === "id" ? 0 : 20;
+    return c.kind === "id" ? 0 : c.generated ? 30 : 20;
   }
   const lab = c.label.toLowerCase();
   const ins = c.insert.toLowerCase().replace(/\$0/g, "");
@@ -805,6 +1043,7 @@ function scoreCompletion(c, p, mode) {
   if (c.kind === "id") s -= 5;
   if (mode === "edge" && c.kind === "edge") s -= 8;
   if (mode === "edge" && c.kind !== "edge") s += 30;
+  if (lab.startsWith(p)) s += Math.min(lab.length - p.length, 10);
   // default solid arrow beats --- / locale tie
   if (mode === "edge" && c.label === "-->") s -= 3;
   // longer shared prefix with insert wins (e.g. `-.` → `-.->`)
@@ -854,25 +1093,42 @@ function mermaidCompletions(text, pos, force = false) {
   const p = prefix.toLowerCase();
 
   /** @type {MmCompletion[]} */
-  let pool = MM_COMPLETIONS;
+  let pool = MM_ALL_COMPLETIONS;
+
+  if (!force && kind === "class") {
+    const phrase = text.slice(lineStart, pos).trimStart().toLowerCase();
+    const match =
+      phrase &&
+      MM_ALL_COMPLETIONS.find(
+        (c) =>
+          c.kind === "class" && c.label.includes(" ") && c.label.startsWith(phrase),
+      );
+    if (match) {
+      return {
+        items: [match],
+        replaceStart: lineStart + text.slice(lineStart, pos).search(/\S|$/),
+        replaceEnd: pos,
+      };
+    }
+  }
 
   // Ctrl+Space → catalog (+ rank). Typing → context-narrowed pool.
   if (!force) {
     if (mode === "edge") {
-      pool = MM_COMPLETIONS.filter((c) => c.kind === "edge");
+      pool = MM_ALL_COMPLETIONS.filter((c) => c.kind === "edge");
     } else if (
       !trimmedDoc ||
       (lineStart === 0 && !lineBefore.trim() && start === 0)
     ) {
-      pool = MM_COMPLETIONS.filter((c) => c.kind === "diagram");
+      pool = MM_ALL_COMPLETIONS.filter((c) => c.kind === "diagram");
     } else if (/^(flowchart|graph)\s*$/i.test(lineBefore)) {
-      pool = MM_COMPLETIONS.filter((c) => c.kind === "dir");
+      pool = MM_ALL_COMPLETIONS.filter((c) => c.kind === "dir");
     } else if (kind === "sequence") {
-      pool = MM_COMPLETIONS.filter(
+      pool = MM_ALL_COMPLETIONS.filter(
         (c) => c.kind === "seq" || c.kind === "kw" || c.kind === "edge",
       );
     } else if (kind === "flow") {
-      pool = MM_COMPLETIONS.filter(
+      pool = MM_ALL_COMPLETIONS.filter(
         (c) =>
           c.kind === "kw" ||
           c.kind === "edge" ||
@@ -880,16 +1136,22 @@ function mermaidCompletions(text, pos, force = false) {
           c.kind === "dir",
       );
     } else if (kind === "state") {
-      pool = MM_COMPLETIONS.filter(
+      pool = MM_ALL_COMPLETIONS.filter(
         (c) =>
           c.kind === "kw" ||
           c.label.startsWith("state") ||
           c.label === "[*]" ||
           c.label.startsWith("note"),
       );
-    } else if (kind === "class" || kind === "er" || kind === "gantt") {
+    } else if (kind === "class") {
+      pool = MM_ALL_COMPLETIONS.filter((c) =>
+        MM_CLASS_COMPLETION_LABELS.has(c.label),
+      );
+    } else if (kind === "er" || kind === "gantt") {
       // thin: keywords only; ids still added below
-      pool = MM_COMPLETIONS.filter((c) => c.kind === "kw");
+      pool = MM_ALL_COMPLETIONS.filter((c) => c.kind === "kw");
+    } else if (kind === "git" || kind === "requirement") {
+      pool = MM_ALL_COMPLETIONS.filter((c) => c.kind === "kw");
     }
   }
 
