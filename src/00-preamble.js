@@ -11,7 +11,6 @@
  */
 
 import {
-  Badge,
   Button,
   cn,
   Codicon,
@@ -30,7 +29,7 @@ import {
   KEYBINDS_AREA,
   PALETTE_AREA,
   ROUTES_AREA,
-  SegmentedControl,
+  STATUSBAR_AREAS,
   Select,
   SelectContent,
   SelectItem,
@@ -54,6 +53,7 @@ const DEFAULT_SOURCE = `flowchart TD
 
 /** Live zoom actions published by SvgCanvas → PREVIEW header. */
 const $previewChrome = atom(null);
+const $flowStatus = atom({ state: "idle", detail: "" });
 
 const STORAGE_VIEW = "view";
 const STORAGE_SPLIT = "splitPct"; // 0..100 first-pane share

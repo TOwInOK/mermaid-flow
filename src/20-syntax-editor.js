@@ -1419,7 +1419,7 @@ function MermaidEditor({ value, onChange, disabled, placeholder }) {
 
   return jsxs("div", {
     ref: rootRef,
-    className: "relative min-h-0 flex-1",
+    className: "relative min-h-0 flex-1 bg-(--ui-bg-editor)",
     children: [
       jsx("pre", {
         ref: preRef,

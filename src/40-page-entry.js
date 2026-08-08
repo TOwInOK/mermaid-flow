@@ -1,3 +1,55 @@
+function IconSegmentedControl({ value, onChange, options }) {
+  return jsx("div", {
+    className: "inline-grid w-fit auto-cols-fr grid-flow-col gap-0.5 rounded-[5px] bg-(--ui-bg-tertiary) p-0.5",
+    children: options.map(({ id, label, icon: Icon }) =>
+      jsx(Tip, {
+        label,
+        children: jsx("button", {
+          type: "button",
+          "aria-label": label,
+          "aria-pressed": value === id,
+          onClick: () => onChange(id),
+          className: cn(
+            "flex items-center justify-center rounded-[3px] px-2.5 py-0.5 text-[0.6875rem] font-medium transition-colors",
+            value === id
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          ),
+          children: jsx(Icon, { className: "size-3" }),
+        }),
+      },
+      id,
+      ),
+    ),
+  });
+}
+
+function FlowStatusItem() {
+  const status = useValue($flowStatus);
+  const active = [
+    "listing",
+    "loading",
+    "creating",
+    "saving",
+    "updating",
+    "rendering",
+  ].includes(status.state);
+  const label = status.state === "ready" ? "ready" : status.state;
+  return jsx(Tip, {
+    label: status.detail || `Mermaid Flow: ${label}`,
+    children: jsxs("span", {
+      className:
+        "inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)",
+      children: [
+        active
+          ? jsx(GlyphSpinner, { className: "text-(--ui-text-secondary)" })
+          : null,
+        `mermaid: ${label}`,
+      ],
+    }),
+  });
+}
+
 function FlowPage() {
   const cwd = useValue(host.state.cwd);
 
@@ -57,6 +109,33 @@ function FlowPage() {
   activePathRef.current = activePath;
   sourceRef.current = source;
   dirtyRef.current = dirty;
+
+  useEffect(() => {
+    const state =
+      busy === "list"
+        ? "listing"
+        : busy === "file"
+          ? "loading"
+          : busy === "create"
+            ? "creating"
+            : busy === "save"
+              ? "saving"
+              : busy === "updating"
+                ? "updating"
+                : busy === "render"
+                  ? "rendering"
+                  : dirty
+                    ? "dirty"
+                    : renderError || fsError
+                      ? "error"
+                      : via
+                        ? "ready"
+                        : "idle";
+    const detail = renderError || fsError || (state === "ready" ? via : "");
+    $flowStatus.set({ state, detail });
+  }, [busy, dirty, renderError, fsError, via]);
+
+  useEffect(() => () => $flowStatus.set({ state: "idle", detail: "" }), []);
 
   // Split size via DOM only — React style would wipe live sash drag on re-render.
   useEffect(() => {
@@ -145,6 +224,7 @@ function FlowPage() {
     const path = activePathRef.current;
     const body = sourceRef.current;
     if (!path || !dirtyRef.current) return;
+    setFsError("");
     const gen = ++saveGenRef.current;
     setBusy((b) => b || "save");
     try {
@@ -155,7 +235,9 @@ function FlowPage() {
       dirtyRef.current = false;
     } catch (err) {
       if (gen === saveGenRef.current) {
-        host.notify({ kind: "error", message: err?.message || "Save failed" });
+        const message = err?.message || "Save failed";
+        setFsError(message);
+        host.notify({ kind: "error", message });
       }
     } finally {
       if (gen === saveGenRef.current) setBusy((b) => (b === "save" ? "" : b));
@@ -306,6 +388,7 @@ function FlowPage() {
       const src = extractSource(text, baseName(path));
       if (src === sourceRef.current) return;
       genRef.current += 1;
+      setBusy((b) => b || "updating");
       setSource(src);
       setDirty(false);
       dirtyRef.current = false;
@@ -362,13 +445,26 @@ function FlowPage() {
         setBusy((b) => (b === "list" ? "" : b));
       }
     },
-    [cwd, diagramsDir, projectKey, loadFile, clearActiveEditor, reloadActiveFromDisk],
+    [
+      cwd,
+      diagramsDir,
+      projectKey,
+      loadFile,
+      clearActiveEditor,
+      reloadActiveFromDisk,
+    ],
   );
 
   // Load list when dir / cwd changes
   useEffect(() => {
     void refreshList();
   }, [refreshList]);
+
+  // Poll only while mounted; reloadActiveFromDisk preserves dirty/pending autosave edits.
+  useEffect(() => {
+    const timer = setInterval(() => void reloadActiveFromDisk(), 3000);
+    return () => clearInterval(timer);
+  }, [reloadActiveFromDisk]);
 
   // Disk may change outside (agent / other editor / delete) — re-list + reload active if clean.
   useEffect(() => {
@@ -434,6 +530,7 @@ function FlowPage() {
       return;
     }
     setBusy("create");
+    setFsError("");
     try {
       await fsEnsureDir(diagramsDir, { open: false });
       const path = joinPath(diagramsDir, fileName);
@@ -450,7 +547,9 @@ function FlowPage() {
       await refreshList({ preferName: fileName });
       host.notify({ kind: "success", message: `Created ${fileName}` });
     } catch (err) {
-      host.notify({ kind: "error", message: err?.message || "Create failed" });
+      const message = err?.message || "Create failed";
+      setFsError(message);
+      host.notify({ kind: "error", message });
     } finally {
       setBusy((b) => (b === "create" ? "" : b));
     }
@@ -563,33 +662,8 @@ function FlowPage() {
     void openExternalPath(file);
   };
 
-  const statusBadge = useMemo(() => {
-    if (busy === "save")
-      return jsx(Badge, { variant: "muted", children: "saving" });
-    if (dirty) return jsx(Badge, { variant: "warn", children: "dirty" });
-    if (renderError)
-      return jsx(Badge, { variant: "destructive", children: "error" });
-    if (via) return jsx(Badge, { variant: "default", children: via });
-    return jsx(Badge, { variant: "outline", children: "idle" });
-  }, [busy, dirty, renderError, via]);
-
   const showEditor = view === "split" || view === "source";
   const showPreview = view === "split" || view === "preview";
-  const spinnerShow =
-    busy === "list" ||
-    busy === "file" ||
-    busy === "render" ||
-    busy === "create";
-  const spinnerLabel =
-    busy === "list"
-      ? "Listing…"
-      : busy === "file"
-        ? "Loading…"
-        : busy === "create"
-          ? "Creating…"
-          : busy === "render"
-            ? "Rendering…"
-            : "";
 
   return jsxs("div", {
     className: "relative flex h-full min-h-0 flex-col",
@@ -627,7 +701,6 @@ function FlowPage() {
         className:
           "flex flex-wrap items-center gap-2 border-b border-(--ui-stroke-secondary)/40 px-3 py-2",
         children: [
-          statusBadge,
           jsxs("div", {
             className: "flex items-center gap-1 min-w-0",
             children: [
@@ -681,18 +754,8 @@ function FlowPage() {
           jsxs("div", {
             className: "flex items-center gap-1",
             children: [
-              jsx(SegmentedControl, {
-                value: view,
-                onChange: (v) => setView(v),
-                options: [
-                  { id: "split", label: "", icon: icons.LayoutDashboard },
-                  { id: "source", label: "", icon: icons.FileText },
-                  { id: "preview", label: "", icon: icons.Eye },
-                ],
-              }),
-              // Appears only in split: vertical (side-by-side) | horizontal (stacked)
               view === "split"
-                ? jsx(SegmentedControl, {
+                ? jsx(IconSegmentedControl, {
                     value: splitOrient,
                     onChange: (v) =>
                       setSplitOrient(
@@ -701,17 +764,31 @@ function FlowPage() {
                     options: [
                       {
                         id: "vertical",
-                        label: "",
+                        label: "Side-by-side",
                         icon: icons.PanelLeftIcon,
                       },
                       {
                         id: "horizontal",
-                        label: "",
+                        label: "Stacked",
                         icon: icons.PanelBottom,
                       },
                     ],
                   })
-                : null,
+                : jsx(IconSegmentedControl, {
+                    value: view,
+                    onChange: () => setView("split"),
+                    options: [
+                      { id: "split", label: "Split", icon: icons.LayoutDashboard },
+                    ],
+                  }),
+              jsx(IconSegmentedControl, {
+                value: view,
+                onChange: (v) => setView(v),
+                options: [
+                  { id: "source", label: "Source", icon: icons.FileText },
+                  { id: "preview", label: "Preview", icon: icons.Eye },
+                ],
+              }),
             ],
           }),
         ],
@@ -798,7 +875,8 @@ function FlowPage() {
                       sashDraggingRef.current = false;
                       const el = leftPaneRef.current;
                       if (el) {
-                        if (splitOrient === "horizontal") el.style.height = "50%";
+                        if (splitOrient === "horizontal")
+                          el.style.height = "50%";
                         else el.style.width = "50%";
                       }
                       setSplitPct(50);
@@ -832,10 +910,6 @@ function FlowPage() {
                           : jsx("div", {
                               className: "relative min-h-0 flex-1",
                             }),
-                      jsx(CornerSpinner, {
-                        show: spinnerShow,
-                        label: spinnerLabel,
-                      }),
                     ],
                   })
                 : null,
@@ -982,6 +1056,12 @@ export default {
     const open = () => host.navigate("/mermaid-flow");
 
     ctx.registerMany([
+      {
+        id: "status",
+        area: STATUSBAR_AREAS.right,
+        order: 130,
+        render: () => jsx(FlowStatusItem, {}),
+      },
       {
         id: "page",
         area: ROUTES_AREA,

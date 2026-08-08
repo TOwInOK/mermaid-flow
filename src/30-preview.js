@@ -196,7 +196,8 @@ function sanitizeSvg(raw) {
     }
     if (!pinned) {
       if (root.getAttribute("width") === "100%") root.removeAttribute("width");
-      if (root.getAttribute("height") === "100%") root.removeAttribute("height");
+      if (root.getAttribute("height") === "100%")
+        root.removeAttribute("height");
     }
     const st = root.getAttribute("style") || "";
     const cleaned = st
@@ -229,10 +230,11 @@ function sanitizeSvg(raw) {
 // ---------------------------------------------------------------------------
 
 function ToolbarButton(props) {
-  const { tip, onClick, children, variant, disabled } = props;
+  const { tip, onClick, children, variant, disabled, className } = props;
   const btn = jsx(Button, {
     type: "button",
     size: "xs",
+    className: className,
     variant: variant || "ghost",
     disabled: !!disabled,
     onClick: () => {
@@ -245,24 +247,6 @@ function ToolbarButton(props) {
   return jsx(Tip, { label: tip, children: btn });
 }
 
-function CornerSpinner({ show, label }) {
-  if (!show) return null;
-  return jsx(Tip, {
-    label: label || "Loading…",
-    children: jsx("div", {
-      className:
-        "pointer-events-none absolute right-2 bottom-2 z-20 flex items-center gap-1.5 rounded-[5px] bg-(--ui-bg-tertiary)/90 px-2 py-1 text-[0.6875rem] text-(--ui-text-tertiary) shadow-sm backdrop-blur-sm",
-      children: jsxs("span", {
-        className: "inline-flex items-center gap-1.5",
-        children: [
-          jsx(GlyphSpinner, { className: "text-(--ui-text-secondary)" }),
-          label || "…",
-        ],
-      }),
-    }),
-  });
-}
-
 const SPLIT_MIN = 18;
 const SPLIT_MAX = 82;
 
@@ -270,7 +254,12 @@ const SPLIT_MAX = 82;
  * Sash matching Hermes pane-shell (`tree-split.tsx` Sash).
  * orientation: vertical = side-by-side (col-resize), horizontal = stacked (row-resize).
  */
-function SplitSash({ orientation = "vertical", onLivePct, onCommitPct, onReset }) {
+function SplitSash({
+  orientation = "vertical",
+  onLivePct,
+  onCommitPct,
+  onReset,
+}) {
   const horiz = orientation === "horizontal";
   const [dragging, setDragging] = useState(false);
   const draggingRef = useRef(false);
@@ -469,7 +458,12 @@ function SvgCanvas({ svg, fitKey }) {
         .trim()
         .split(/[\s,]+/)
         .map(Number);
-      if (p.length === 4 && p.every((n) => Number.isFinite(n)) && p[2] > 0 && p[3] > 0) {
+      if (
+        p.length === 4 &&
+        p.every((n) => Number.isFinite(n)) &&
+        p[2] > 0 &&
+        p[3] > 0
+      ) {
         return { ox: p[0], oy: p[1], w: p[2], h: p[3], via: "viewBox" };
       }
     }
@@ -652,9 +646,12 @@ function SvgCanvas({ svg, fitKey }) {
     };
   }, [safeSvg, fitKey, normalizeSvgEl, fitView]);
 
-  useEffect(() => () => {
-    if (paintFrameRef.current) cancelAnimationFrame(paintFrameRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (paintFrameRef.current) cancelAnimationFrame(paintFrameRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -737,7 +734,7 @@ function SvgCanvas({ svg, fitKey }) {
       jsx("div", {
         ref: viewportRef,
         className: cn(
-          "relative min-h-0 flex-1 overflow-hidden touch-none",
+          "relative min-h-0 flex-1 overflow-hidden touch-none bg-(--ui-bg-chrome)",
           grabbing ? "cursor-grabbing" : "cursor-grab",
         ),
         onPointerDown,
@@ -757,7 +754,7 @@ function SvgCanvas({ svg, fitKey }) {
           dangerouslySetInnerHTML: { __html: safeSvg },
         }),
       }),
-      // zoom chip floats over SVG (same corner as old header-right)
+      // zoom chip floats over SVG
       jsx("div", {
         className: "pointer-events-auto absolute top-2 right-2 z-20",
         children: jsx(PreviewChrome, {}),
@@ -772,18 +769,17 @@ function PreviewChrome() {
   if (!chrome) return null;
   return jsxs("div", {
     className:
-      "flex h-7 items-center gap-0.5 rounded-[5px] bg-(--ui-bg-tertiary)/90 px-1 shadow-sm backdrop-blur-sm",
+      "flex rounded bg-(--ui-bg-tertiary)/90  shadow-sm backdrop-blur-sm mr-1",
     children: [
       jsx(ToolbarButton, {
         tip: "Zoom out",
         onClick: () => chrome.zoomOut(),
         children: jsx(Codicon, { name: "zoom-out" }),
       }),
-      jsx("button", {
-        type: "button",
+      jsx(ToolbarButton, {
         className:
-          "w-12 shrink-0 rounded-[3px] px-0 py-0.5 text-center text-[0.6875rem] tabular-nums normal-case text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground",
-        title: "Reset to 100%",
+          "w-8 shrink-0  px-0 py-0.5 text-center text-[0.6875rem] tabular-nums normal-case text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground",
+        tip: "Reset to 100%",
         onClick: () => {
           haptic("tap");
           chrome.reset();
@@ -803,8 +799,3 @@ function PreviewChrome() {
     ],
   });
 }
-
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
-
