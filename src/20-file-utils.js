@@ -17,6 +17,10 @@ function baseName(p) {
   return i >= 0 ? s.slice(i + 1) : s;
 }
 
+function parentDir(p) {
+  return String(p || "").replace(/[/\\][^/\\]+$/, "");
+}
+
 function isAbsPath(p) {
   return /^([A-Za-z]:[\\/]|\/|\\\\)/.test(String(p || ""));
 }
@@ -42,61 +46,32 @@ function slugifyName(raw) {
 }
 
 function ensureMmdName(name) {
-  const base = slugifyName(name);
-  return /\.mmd$/i.test(base) ? base : `${base}.mmd`;
+  return `${slugifyName(name)}.mmd`;
 }
 
 async function fsReadDir(dir) {
   const b = bridge();
-  if (!b?.readDir) throw new Error("readDir unavailable");
+  if (!b) throw new Error("Desktop bridge unavailable");
   return b.readDir(dir);
 }
 
 async function fsReadText(path) {
   const b = bridge();
-  if (!b?.readFileText) throw new Error("readFileText unavailable");
+  if (!b) throw new Error("Desktop bridge unavailable");
   const res = await b.readFileText(path);
-  return res?.text ?? "";
+  return res.text;
 }
 
-async function fsWriteText(path, content) {
-  const b = bridge();
-  if (!b?.writeTextFile) throw new Error("writeTextFile unavailable");
-  return b.writeTextFile(path, content);
-}
-
-/** Ensure dir exists. open:true → openDir (mkdir + FM). open:false → silent mkdir if bridge has it; else one openDir (FM unavoidable — no silent mkdir on hermesDesktop). */
+/** Ensure dir exists. The current bridge has no silent mkdir; creation opens FM. */
 async function fsEnsureDir(dir, { open = false } = {}) {
   const b = bridge();
   if (!b) throw new Error("Desktop bridge unavailable");
-
-  try {
-    const listed = await b.readDir(dir);
-    if (!listed?.error) {
-      if (open && b.openDir) await b.openDir(dir);
-      return true;
-    }
-  } catch {
-    /* create below */
-  }
-
-  // Silent mkdir ladder if present on bridge (none on current Desktop types).
-  const silent =
-    (typeof b.mkdir === "function" && b.mkdir) ||
-    (typeof b.ensureDir === "function" && b.ensureDir) ||
-    (typeof b.createDir === "function" && b.createDir) ||
-    null;
-  if (silent) {
-    const res = await silent.call(b, dir);
-    if (res && res.ok === false) throw new Error(res.error || "mkdir failed");
-    if (open && b.openDir) await b.openDir(dir);
-    return true;
-  }
-
+  const listed = await fsReadDir(dir);
+  if (!listed.error && !open) return true;
+  if (listed.error && listed.error !== "ENOENT") throw new Error(listed.error);
   if (!b.openDir) throw new Error("Cannot create folder (openDir missing)");
-  // ponytail: no silent mkdir on bridge; openDir = mkdir -p + FM (one call max)
   const res = await b.openDir(dir);
-  if (res && res.ok === false) throw new Error(res.error || "mkdir failed");
+  if (!res.ok) throw new Error(res.error || "Cannot open folder");
   return true;
 }
 
@@ -107,16 +82,16 @@ async function listDiagramFiles(dir) {
     err.code = "LIST";
     throw err;
   }
-  const entries = Array.isArray(res?.entries) ? res.entries : [];
-  return entries
+  return res.entries
     .filter(
-      (e) =>
-        !e.isDirectory && /\.(mmd|mermaid|md)$/i.test(e.name || e.path || ""),
+      (e) => !e.isDirectory && /\.(mmd|mermaid|md)$/i.test(e.name),
     )
     .map((e) => {
-      const name = e.name || baseName(e.path);
-      const path = e.path || joinPath(dir, name);
-      return { name, path, label: name.replace(/\.(mmd|mermaid|md)$/i, "") };
+      return {
+        name: e.name,
+        path: e.path,
+        label: e.name.replace(/\.(mmd|mermaid|md)$/i, ""),
+      };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 }
@@ -185,6 +160,50 @@ function packSource(source, fileName) {
     return "```mermaid\n" + body.trim() + "\n```\n";
   }
   return body;
+}
+
+/** Pack and write an immutable diagram snapshot through the only write path. */
+let snapshotWriteQueue = Promise.resolve();
+
+async function performDiagramWrite(path, source) {
+  const b = bridge();
+  if (!b?.writeTextFile) throw new Error("writeTextFile unavailable");
+  const packed = packSource(source, baseName(path));
+  try {
+    await b.writeTextFile(path, packed);
+  } catch (err) {
+    if ((err?.message || String(err)) !== "Parent directory does not exist") {
+      throw err;
+    }
+    await fsEnsureDir(parentDir(path));
+    await b.writeTextFile(path, packed);
+  }
+}
+
+function writeDiagramSnapshot(path, source) {
+  // ponytail: one global queue; split per path only if save throughput matters.
+  const write = snapshotWriteQueue.then(() => performDiagramWrite(path, source));
+  snapshotWriteQueue = write.catch(() => {});
+  return write;
+}
+
+async function readDiagramForSwitch(path, current) {
+  if (current?.dirty && current.path) {
+    await writeDiagramSnapshot(current.path, current.source);
+  }
+  return extractSource(await fsReadText(path), baseName(path));
+}
+
+async function createDiagramSnapshot(dir, fileName, source) {
+  await fsEnsureDir(dir);
+  const files = await listDiagramFiles(dir);
+  const foldedName = fileName.toLowerCase();
+  if (files.some((file) => file.name.toLowerCase() === foldedName)) {
+    throw new Error(`${fileName} already exists`);
+  }
+  const path = joinPath(dir, fileName);
+  await writeDiagramSnapshot(path, source);
+  return path;
 }
 
 function isMermaidPath(path) {

@@ -1,4 +1,5 @@
 function isDarkUi() {
+  // TODO: migrate to reactive host.state.mode when the public SDK exposes it.
   try {
     const bg =
       getComputedStyle(document.body).backgroundColor ||
@@ -224,31 +225,6 @@ function sanitizeSvg(raw) {
     return "";
   }
 }
-
-// ---------------------------------------------------------------------------
-// UI atoms
-// ---------------------------------------------------------------------------
-
-function ToolbarButton(props) {
-  const { tip, onClick, children, variant, disabled, className } = props;
-  const btn = jsx(Button, {
-    type: "button",
-    size: "xs",
-    className: className,
-    variant: variant || "ghost",
-    disabled: !!disabled,
-    onClick: () => {
-      haptic("tap");
-      onClick?.();
-    },
-    children,
-  });
-  if (!tip) return btn;
-  return jsx(Tip, { label: tip, children: btn });
-}
-
-const SPLIT_MIN = 18;
-const SPLIT_MAX = 82;
 
 /**
  * Sash matching Hermes pane-shell (`tree-split.tsx` Sash).
@@ -771,30 +747,58 @@ function PreviewChrome() {
     className:
       "flex rounded bg-(--ui-bg-tertiary)/90  shadow-sm backdrop-blur-sm mr-1",
     children: [
-      jsx(ToolbarButton, {
-        tip: "Zoom out",
-        onClick: () => chrome.zoomOut(),
-        children: jsx(Codicon, { name: "zoom-out" }),
+      jsx(Tip, {
+        label: "Zoom out",
+        children: jsx(Button, {
+          type: "button",
+          size: "icon-xs",
+          variant: "ghost",
+          onClick: () => {
+            haptic("tap");
+            chrome.zoomOut();
+          },
+          children: jsx(Codicon, { name: "zoom-out" }),
+        }),
       }),
-      jsx(ToolbarButton, {
-        className:
-          "w-8 shrink-0  px-0 py-0.5 text-center text-[0.6875rem] tabular-nums normal-case text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground",
-        tip: "Reset to 100%",
-        onClick: () => {
-          haptic("tap");
-          chrome.reset();
-        },
-        children: `${chrome.pct}%`,
+      jsx(Tip, {
+        label: "Reset to 100%",
+        children: jsx(Button, {
+          type: "button",
+          size: "xs",
+          variant: "ghost",
+          className: "w-8 px-0 tabular-nums",
+          onClick: () => {
+            haptic("tap");
+            chrome.reset();
+          },
+          children: `${chrome.pct}%`,
+        }),
       }),
-      jsx(ToolbarButton, {
-        tip: "Zoom in",
-        onClick: () => chrome.zoomIn(),
-        children: jsx(Codicon, { name: "zoom-in" }),
+      jsx(Tip, {
+        label: "Zoom in",
+        children: jsx(Button, {
+          type: "button",
+          size: "icon-xs",
+          variant: "ghost",
+          onClick: () => {
+            haptic("tap");
+            chrome.zoomIn();
+          },
+          children: jsx(Codicon, { name: "zoom-in" }),
+        }),
       }),
-      jsx(ToolbarButton, {
-        tip: "Fit",
-        onClick: () => chrome.fit(),
-        children: jsx(Codicon, { name: "screen-full" }),
+      jsx(Tip, {
+        label: "Fit",
+        children: jsx(Button, {
+          type: "button",
+          size: "icon-xs",
+          variant: "ghost",
+          onClick: () => {
+            haptic("tap");
+            chrome.fit();
+          },
+          children: jsx(Codicon, { name: "screen-full" }),
+        }),
       }),
     ],
   });

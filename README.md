@@ -92,17 +92,29 @@ Folder dialog:
 ```text
 plugin.js                 # entry only: banner + // @include lines
 src/
-  00-preamble.js          # imports, constants, storage/os, $previewChrome
-  10-core.js              # paths, FS helpers, normalize/pack, DnD
-  20-syntax-editor.js     # highlight, completions, MermaidEditor
-  30-preview.js           # mermaid.ink → kroki, sanitize, sash, SvgCanvas
-  40-page-entry.js        # FlowPage + export default register
+  00-runtime.js           # allowed imports + plugin storage handle
+  10-constants.js         # storage keys, atoms, palettes, Mermaid catalogs
+  20-file-utils.js        # paths, FS/source helpers, DnD, snapshot writer
+  30-mermaid-language.js  # highlighting, transforms, completions
+  40-editor.js            # DOM/React Mermaid editor
+  50-svg-preview.js       # remote render, sanitize, sash, SVG camera
+  60-flow-page.js         # React page orchestration and composition
+  70-plugin-meta.js       # only plugin contract / export default
 ```
 
 Include order (shared top-level scope after expand — not separate ESM modules):
 
 ```text
-00-preamble.js → 10-core.js → 20-syntax-editor.js → 30-preview.js → 40-page-entry.js
+00-runtime.js → 10-constants.js → 20-file-utils.js → 30-mermaid-language.js
+→ 40-editor.js → 50-svg-preview.js → 60-flow-page.js → 70-plugin-meta.js
 ```
 
-Edit `src/*.js`. Hermes Desktop expands whole-line `// @include ./rel.js` when reading `plugin.js`; saves hot-reload after the loader change ships.
+The include order is the dependency order. Fragments are not ESM modules: Hermes Desktop expands whole-line `// @include ./rel.js` directives into one shared top-level scope before loading. Imports belong only in `00-runtime.js`; `70-plugin-meta.js` is the only fragment that exports the plugin contract.
+
+## Development checks
+
+```sh
+for file in plugin.js src/*.js scripts/*.mjs; do node --check "$file"; done
+node scripts/check-structure.mjs
+node scripts/check-pure.mjs
+```

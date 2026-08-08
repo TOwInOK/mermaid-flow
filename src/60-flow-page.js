@@ -1,29 +1,3 @@
-function IconSegmentedControl({ value, onChange, options }) {
-  return jsx("div", {
-    className: "inline-grid w-fit auto-cols-fr grid-flow-col gap-0.5 rounded-[5px] bg-(--ui-bg-tertiary) p-0.5",
-    children: options.map(({ id, label, icon: Icon }) =>
-      jsx(Tip, {
-        label,
-        children: jsx("button", {
-          type: "button",
-          "aria-label": label,
-          "aria-pressed": value === id,
-          onClick: () => onChange(id),
-          className: cn(
-            "flex items-center justify-center rounded-[3px] px-2.5 py-0.5 text-[0.6875rem] font-medium transition-colors",
-            value === id
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          ),
-          children: jsx(Icon, { className: "size-3" }),
-        }),
-      },
-      id,
-      ),
-    ),
-  });
-}
-
 function FlowStatusItem() {
   const status = useValue($flowStatus);
   const active = [
@@ -196,26 +170,6 @@ function FlowPage() {
     setRelDir(map[projectKey] || DEFAULT_REL_DIR);
   }, [projectKey]);
 
-  const writeActiveIfDirty = useCallback(async () => {
-    const path = activePathRef.current;
-    const body = sourceRef.current;
-    if (!path || !dirtyRef.current) return false;
-    const packed = packSource(body, baseName(path));
-    try {
-      await fsWriteText(path, packed);
-    } catch (err) {
-      const msg = err?.message || String(err);
-      if (/parent directory does not exist|ENOENT|not exist/i.test(msg)) {
-        const dir = path.replace(/[/\\][^/\\]+$/, "");
-        await fsEnsureDir(dir, { open: false });
-        await fsWriteText(path, packed);
-      } else {
-        throw err;
-      }
-    }
-    return true;
-  }, []);
-
   const flushSave = useCallback(async () => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
@@ -228,7 +182,7 @@ function FlowPage() {
     const gen = ++saveGenRef.current;
     setBusy((b) => b || "save");
     try {
-      await writeActiveIfDirty();
+      await writeDiagramSnapshot(path, body);
       if (gen !== saveGenRef.current) return;
       if (activePathRef.current !== path || sourceRef.current !== body) return;
       setDirty(false);
@@ -242,7 +196,7 @@ function FlowPage() {
     } finally {
       if (gen === saveGenRef.current) setBusy((b) => (b === "save" ? "" : b));
     }
-  }, [writeActiveIfDirty]);
+  }, []);
 
   const scheduleSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -264,24 +218,11 @@ function FlowPage() {
       if (!dirtyRef.current || !activePathRef.current) return;
       const path = activePathRef.current;
       const body = sourceRef.current;
-      const packed = packSource(body, baseName(path));
       void (async () => {
         try {
-          await fsWriteText(path, packed);
+          await writeDiagramSnapshot(path, body);
           dirtyRef.current = false;
         } catch (err) {
-          try {
-            const msg = err?.message || String(err);
-            if (/parent directory does not exist|ENOENT|not exist/i.test(msg)) {
-              const dir = path.replace(/[/\\][^/\\]+$/, "");
-              await fsEnsureDir(dir, { open: false });
-              await fsWriteText(path, packed);
-              dirtyRef.current = false;
-              return;
-            }
-          } catch {
-            /* fall through */
-          }
           try {
             host.notify({
               kind: "error",
@@ -323,33 +264,19 @@ function FlowPage() {
   const loadFile = useCallback(
     async (path) => {
       if (!path) return;
-      // save previous first
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
-      }
-      if (
-        dirtyRef.current &&
-        activePathRef.current &&
-        activePathRef.current !== path
-      ) {
-        try {
-          await fsWriteText(
-            activePathRef.current,
-            packSource(sourceRef.current, baseName(activePathRef.current)),
-          );
-          setDirty(false);
-          dirtyRef.current = false;
-        } catch {
-          /* keep going */
-        }
       }
 
       setBusy("file");
       setFsError("");
       try {
-        const text = await fsReadText(path);
-        const src = extractSource(text, baseName(path));
+        const src = await readDiagramForSwitch(path, {
+          path: activePathRef.current,
+          source: sourceRef.current,
+          dirty: dirtyRef.current && !!activePathRef.current,
+        });
         // Drop stale preview so SvgCanvas remounts / re-fits for the new file.
         // Bump gen so an in-flight render for the previous source can't land.
         genRef.current += 1;
@@ -362,13 +289,11 @@ function FlowPage() {
         setDirty(false);
         dirtyRef.current = false;
       } catch (err) {
-        // Gone from disk → drop from Select + clear editor if it was active.
-        setFiles((prev) => prev.filter((f) => f.path !== path));
-        if (activePathRef.current === path) clearActiveEditor();
-        setFsError(err?.message || String(err));
+        const message = err?.message || String(err);
+        setFsError(message);
         host.notify({
           kind: "error",
-          message: err?.message || "Read failed (file missing?)",
+          message,
         });
       } finally {
         setBusy((b) => (b === "file" ? "" : b));
@@ -414,6 +339,14 @@ function FlowPage() {
         const activeGone =
           !!activePathRef.current &&
           !list.some((f) => f.path === activePathRef.current);
+
+        if (activeGone && (dirtyRef.current || saveTimer.current)) {
+          host.notify({
+            kind: "error",
+            message: "Active diagram changed on disk; local unsaved content was kept",
+          });
+          return;
+        }
 
         if (!autoSelect) {
           if (activeGone) clearActiveEditor();
@@ -532,16 +465,7 @@ function FlowPage() {
     setBusy("create");
     setFsError("");
     try {
-      await fsEnsureDir(diagramsDir, { open: false });
-      const path = joinPath(diagramsDir, fileName);
-      try {
-        await fsReadText(path);
-        host.notify({ kind: "error", message: `${fileName} already exists` });
-        return;
-      } catch {
-        /* new file ok */
-      }
-      await fsWriteText(path, DEFAULT_SOURCE);
+      await createDiagramSnapshot(diagramsDir, fileName, DEFAULT_SOURCE);
       setNewOpen(false);
       setNewName("");
       await refreshList({ preferName: fileName });
@@ -564,8 +488,8 @@ function FlowPage() {
 
   const browseFolder = async () => {
     const b = bridge();
-    if (!b?.selectPaths) {
-      host.notify({ kind: "error", message: "Folder picker unavailable" });
+    if (!b) {
+      host.notify({ kind: "error", message: "Desktop bridge unavailable" });
       return;
     }
     const picked = await b.selectPaths({
@@ -729,22 +653,33 @@ function FlowPage() {
                   }),
                 ],
               }),
-              jsx(ToolbarButton, {
-                tip: "New diagram",
-                variant: "secondary",
-                onClick: () => {
-                  setNewName("");
-                  setNewOpen(true);
-                },
-                children: jsx(Codicon, { name: "add" }),
+              jsx(Tip, {
+                label: "New diagram",
+                children: jsx(Button, {
+                  type: "button",
+                  size: "icon-xs",
+                  variant: "secondary",
+                  onClick: () => {
+                    haptic("tap");
+                    setNewName("");
+                    setNewOpen(true);
+                  },
+                  children: jsx(Codicon, { name: "add" }),
+                }),
               }),
-              jsx(ToolbarButton, {
-                tip: `Folder: ${relDir}`,
-                onClick: () => {
-                  setFolderDraft(relDir);
-                  setFolderOpen(true);
-                },
-                children: jsx(Codicon, { name: "folder" }),
+              jsx(Tip, {
+                label: `Folder: ${relDir}`,
+                children: jsx(Button, {
+                  type: "button",
+                  size: "icon-xs",
+                  variant: "ghost",
+                  onClick: () => {
+                    haptic("tap");
+                    setFolderDraft(relDir);
+                    setFolderOpen(true);
+                  },
+                  children: jsx(Codicon, { name: "folder" }),
+                }),
               }),
             ],
           }),
@@ -755,7 +690,7 @@ function FlowPage() {
             className: "flex items-center gap-1",
             children: [
               view === "split"
-                ? jsx(IconSegmentedControl, {
+                ? jsx(SegmentedControl, {
                     value: splitOrient,
                     onChange: (v) =>
                       setSplitOrient(
@@ -764,29 +699,29 @@ function FlowPage() {
                     options: [
                       {
                         id: "vertical",
-                        label: "Side-by-side",
+                        label: "",
                         icon: icons.PanelLeftIcon,
                       },
                       {
                         id: "horizontal",
-                        label: "Stacked",
+                        label: "",
                         icon: icons.PanelBottom,
                       },
                     ],
                   })
-                : jsx(IconSegmentedControl, {
+                : jsx(SegmentedControl, {
                     value: view,
                     onChange: () => setView("split"),
                     options: [
-                      { id: "split", label: "Split", icon: icons.LayoutDashboard },
+                      { id: "split", label: "", icon: icons.LayoutDashboard },
                     ],
                   }),
-              jsx(IconSegmentedControl, {
+              jsx(SegmentedControl, {
                 value: view,
                 onChange: (v) => setView(v),
                 options: [
-                  { id: "source", label: "Source", icon: icons.FileText },
-                  { id: "preview", label: "Preview", icon: icons.Eye },
+                  { id: "source", label: "", icon: icons.FileText },
+                  { id: "preview", label: "", icon: icons.Eye },
                 ],
               }),
             ],
@@ -854,7 +789,7 @@ function FlowPage() {
                   })
                 : null,
 
-              view === "split" && showEditor && showPreview
+              view === "split"
                 ? jsx(SplitSash, {
                     orientation: splitOrient,
                     onLivePct: (pct) => {
@@ -1040,65 +975,3 @@ function FlowPage() {
     ],
   });
 }
-
-// ---------------------------------------------------------------------------
-// Plugin contract
-// ---------------------------------------------------------------------------
-
-export default {
-  id: "mermaid-flow",
-  name: "Mermaid Flow",
-  defaultEnabled: true,
-  register(ctx) {
-    storage = ctx.storage;
-    os = ctx.os;
-
-    const open = () => host.navigate("/mermaid-flow");
-
-    ctx.registerMany([
-      {
-        id: "status",
-        area: STATUSBAR_AREAS.right,
-        order: 130,
-        render: () => jsx(FlowStatusItem, {}),
-      },
-      {
-        id: "page",
-        area: ROUTES_AREA,
-        data: { path: "/mermaid-flow" },
-        render: () => jsx(FlowPage, {}),
-      },
-      {
-        id: "nav",
-        area: SIDEBAR_NAV_AREA,
-        data: {
-          path: "/mermaid-flow",
-          label: "Mermaid Flow",
-          codicon: "type-hierarchy-sub",
-        },
-      },
-      {
-        id: "open",
-        area: PALETTE_AREA,
-        data: {
-          id: "mermaid-flow.open",
-          action: "mermaid-flow.open",
-          label: "Open Mermaid Flow",
-          keywords: ["mermaid", "diagram", "flow", "docs"],
-          run: open,
-        },
-      },
-      {
-        id: "open-key",
-        area: KEYBINDS_AREA,
-        data: {
-          id: "mermaid-flow.open",
-          label: "Open Mermaid Flow",
-          category: "Mermaid Flow",
-          defaults: ["mod+shift+m"],
-          run: open,
-        },
-      },
-    ]);
-  },
-};
