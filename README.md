@@ -2,6 +2,14 @@
 
 Mermaid Flow is a Hermes Desktop plugin for editing Mermaid diagrams as ordinary project files and previewing them live. Keep architecture, API, and UX flows next to the code instead of in a separate drawing tool.
 
+--
+
+<div align="center">
+    <img src="https://raw.githubusercontent.com/TOwInOK/mermaid-flow/refs/heads/main/.github/preview.webp"/>
+</div>
+
+--
+
 - **Project-backed.** Default folder `{cwd}/docs/mermaid`, overridable per project.
 - **Live preview.** Remote SVG via `mermaid.ink`, then `kroki.io`.
 - **Split workflow.** Source | split | preview with a draggable sash.

@@ -1101,7 +1101,9 @@ function mermaidCompletions(text, pos, force = false) {
       phrase &&
       MM_ALL_COMPLETIONS.find(
         (c) =>
-          c.kind === "class" && c.label.includes(" ") && c.label.startsWith(phrase),
+          c.kind === "class" &&
+          c.label.includes(" ") &&
+          c.label.startsWith(phrase),
       );
     if (match) {
       return {
@@ -1785,7 +1787,7 @@ function MermaidEditor({ value, onChange, disabled, placeholder }) {
                   style: selected
                     ? {
                         background:
-                          "color-mix(in oklab, var(--ui-accent) 32%, var(--ui-bg-tertiary, transparent))",
+                          "color-mix(in oklab, var(--ui-accent) 32%, var(--ui-bg-tertiary, --ui-bg-primary))",
                         boxShadow: "inset 2px 0 0 var(--ui-accent)",
                       }
                     : undefined,
@@ -1840,4 +1842,3 @@ function MermaidEditor({ value, onChange, disabled, placeholder }) {
 // ---------------------------------------------------------------------------
 // Theme + remote SVG render
 // ---------------------------------------------------------------------------
-
