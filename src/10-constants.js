@@ -370,7 +370,7 @@ const MM_COMPLETIONS = [
   },
   {
     label: "class",
-    insert: "class $0 {\n  \n}",
+    insert: "class $0",
     detail: "Define / assign class",
     kind: "kw",
   },

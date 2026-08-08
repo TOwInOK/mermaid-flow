@@ -578,7 +578,7 @@ function MermaidEditor({ value, onChange, disabled, placeholder }) {
             "aria-activedescendant": `mm-cm-${cm.idx}`,
             "aria-label": "Completions",
             className:
-              "absolute z-30 max-h-56 min-w-52 max-w-80 overflow-auto rounded-[6px] border border-(--ui-stroke-secondary)/50 bg-(--ui-bg-primary) py-1 text-xs shadow-lg",
+              "absolute z-30 max-h-56 min-w-52 max-w-80 overflow-auto rounded-[6px] border border-(--ui-stroke-secondary)/50 bg-(--ui-bg-elevated) py-1 text-xs text-(--ui-text-primary) shadow-lg",
             style: { left: cm.x, top: cm.y },
             onMouseDown: (e) => e.preventDefault(),
             children: cm.items.map((item, i) => {

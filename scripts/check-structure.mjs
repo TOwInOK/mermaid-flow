@@ -49,6 +49,8 @@ assert.deepEqual(
 );
 
 const all = files.map(([, source]) => source).join("\n");
+const editor = files.find(([file]) => file === "./src/40-editor.js")[1];
+assert.match(editor, /role: "listbox",[\s\S]*?bg-\(--ui-bg-elevated\)/);
 for (const symbol of ["IconSegmentedControl", "ToolbarButton", "let os", "os = ctx.os"]) {
   assert(!all.includes(symbol), `${symbol} remains`);
 }

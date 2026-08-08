@@ -10,6 +10,7 @@ const sources = await Promise.all(
     (file) => fs.readFile(path.join(root, file), "utf8"),
   ),
 );
+const constantsSource = sources[0];
 
 function sandbox(desktop) {
   const context = vm.createContext({
@@ -23,6 +24,7 @@ function sandbox(desktop) {
     ensureMmdName,
     extractDocIds,
     extractSource,
+    mermaidCompletions,
     normalizeMermaidSource,
     packSource,
     readDiagramForSwitch,
@@ -31,6 +33,13 @@ function sandbox(desktop) {
 }
 
 assert.equal(sandbox({}).ensureMmdName(" Road Map.mermaid "), "Road-Map.mmd");
+assert.match(constantsSource, /label: "class",\s*insert: "class \$0",/);
+assert.equal(
+  sandbox({})
+    .mermaidCompletions("classDiagram\n  clas", 19)
+    .items.find((item) => item.label === "class")?.insert,
+  "class $0",
+);
 assert.equal(
   sandbox({}).normalizeMermaidSource("A → B"),
   "flowchart TD\nA --> B\n",
